@@ -1,0 +1,1638 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+        "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html>
+<head>
+<title>Databáze Redis (nejenom) pro vývojáře používající Python (dokončení)</title>
+<meta name="Author" content="Pavel Tisnovsky" />
+<meta name="Generator" content="vim" />
+<meta http-equiv="content-type" content="text/html; charset=utf-8" />
+<style type="text/css">
+         body {color:#000000; background:#ffffff;}
+         h1  {font-family: arial, helvetica, sans-serif; color:#ffffff; background-color:#c00000; text-align:center; padding-left:1em}
+         h2  {font-family: arial, helvetica, sans-serif; color:#ffffff; background-color:#0000c0; padding-left:1em; text-align:left}
+         h3  {font-family: arial, helvetica, sans-serif; color:#000000; background-color:#c0c0c0; padding-left:1em; text-align:left}
+         h4  {font-family: arial, helvetica, sans-serif; color:#000000; background-color:#e0e0e0; padding-left:1em; text-align:left}
+         a   {font-family: arial, helvetica, sans-serif;}
+         li  {font-family: arial, helvetica, sans-serif; color:#000000; text-align:justify; width:450px;}
+         ol  {font-family: arial, helvetica, sans-serif; color:#000000; text-align:justify; width:450px;}
+         ul  {font-family: arial, helvetica, sans-serif; color:#000000; text-align:justify; width:450px;}
+         p   {font-family: arial, helvetica, sans-serif; color:#000000; text-align:justify;}
+         pre {background:#e0e0e0}
+</style>
+</head>
+
+<body>
+
+<h1>Databáze Redis (nejenom) pro vývojáře používající Python (dokončení)</h1>
+
+<h3>Pavel Tišnovský</h3>
+
+<p></p>
+
+<h1>Úvodník</h1>
+
+<p>Ve druhé části článku o projektu Redis si ukážeme další možnosti, které nám tento nástroj nabízí. Zaměříme se přitom jak na přímé použití konzole redis-cli, tak i na volání funkcí Redisu z Pythonu.</p>
+
+
+
+<h2>Obsah</h2>
+
+<p><a href="#k01">1. Databáze Redis (nejenom) pro vývojáře používající Python (dokončení)</a></p>
+<p><a href="#k02">2. Odpovědi serveru vracející pole (<i>array</i>)</a></p>
+<p><a href="#k03">3. Hodnoty <strong>nil</strong></a></p>
+<p><a href="#k04">4. Komunikace mezi subsystémy s&nbsp;využitím zpráv</a></p>
+<p><a href="#k05">5. Podpora pro paradigma publish-subscribe v&nbsp;Redisu</a></p>
+<p><a href="#k06">6. Otestování publikování a odběru zpráv z&nbsp;konzole Redisu</a></p>
+<p><a href="#k07">7. Použití paradigmatu publish-subscribe z&nbsp;Pythonu</a></p>
+<p><a href="#k08">8. Naprogramování handleru pro čtení publikovaných zpráv</a></p>
+<p><a href="#k09">9. Ignorování zpráv o přihlášení a odhlášení z&nbsp;kanálu</a></p>
+<p><a href="#k10">10. Chování v&nbsp;případě, že je klient odebírající zprávy pomalý</a></p>
+<p><a href="#k11">11. Export dat do formátu CSV</a></p>
+<p><a href="#k12">12. Protokol použitý pro komunikaci se serverem</a></p>
+<p><a href="#k13">13. Příkazy posílané serveru</a></p>
+<p><a href="#k14">14. Odpověď obsahující jednoduchý řetězec</a></p>
+<p><a href="#k15">15. Odpověď vrácená serverem v&nbsp;případě chyby</a></p>
+<p><a href="#k16">16. Odpověď obsahující celé číslo (<i>integer</i>)</a></p>
+<p><a href="#k17">17. Odpověď s&nbsp;dlouhým řetězcem resp.&nbsp;blokem bajtů</a></p>
+<p><a href="#k18">18. Odpověď obsahující pole hodnot</a></p>
+<p><a href="#k19">19. Repositář s&nbsp;demonstračními příklady</a></p>
+<p><a href="#k20">20. Odkazy na Internetu</a></p>
+
+
+
+<p><a name="k01"></a></p>
+<h2 id="k01">1. Databáze Redis (nejenom) pro vývojáře používající Python (dokončení)</h2>
+
+<p><a
+href="https://www.root.cz/clanky/databaze-redis-nejenom-pro-vyvojare-pouzivajici-python/">V&nbsp;úvodním
+článku o projektu Redis</a> jsme se seznámili se základními vlastnostmi tohoto
+systému (v&nbsp;režimu, kdy je Redis provozován na jediném stroji). Taktéž jsme
+si popsali základní datové typy, s&nbsp;nimiž tato databáze dokáže pracovat a
+které tedy mohou používat klientské programy při ukládání a načítání údajů do/z
+Redisu. V&nbsp;závěrečných kapitolách byl zmíněn způsob volání funkcí Redisu
+z&nbsp;aplikací vyvinutých v&nbsp;programovacím jazyku Python. Dnes budeme
+v&nbsp;popisu Redisu pokračovat. Ukážeme si zejména způsob použití paradigmatu
+<i>publish-subscribe</i>, který může být v&nbsp;některých případech velmi
+užitečný, a taktéž se zmíníme o protokolu, který se používá při komunikaci mezi
+klientem a serverem Redisu. Vše bude opět vysvětleno jak na příkladech
+spouštěných přímo z&nbsp;interaktivní konzole Redisu, tak i
+z&nbsp;programů/skriptů napsaných v&nbsp;Pythonu (tyto programy využívají
+knihovnu <strong>redis-py</strong>).</p>
+
+
+
+<p><a name="k02"></a></p>
+<h2 id="k02">2. Odpovědi serveru vracející pole (<i>array</i>)</h2>
+
+<p>Nejdříve si připomeneme, jakým způsobem se vlastně v&nbsp;interaktivní
+konzoli vypisuje seznam hodnot, protože právě se seznamy hodnot budeme často
+pracovat v&nbsp;dalším textu. V&nbsp;dokumentaci Redisu se ovšem namísto pojmu
+<i>seznam (list)</i> používá spíše pojem <i>pole (array)</i> ve chvíli, kdy se
+nepíše o datové struktuře uložené v&nbsp;databázi, ale o formátu odpovědi
+serveru klientům. Práce se seznamy uloženými v&nbsp;databázi a poli
+v&nbsp;odpovědích serveru je ve skutečnosti značně přímočará. Přímo
+v&nbsp;konzoli Redisu (<strong>redis-cli</strong>) vytvoříme nový seznam, do
+něhož vložíme několik hodnot (prvků):</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>rpush seznam1 prvni</strong>
+(integer) 1
+127.0.0.1:6379&gt; <strong>rpush seznam1 druhy</strong>
+(integer) 2
+127.0.0.1:6379&gt; <strong>rpush seznam1 treti</strong>
+(integer) 3
+127.0.0.1:6379&gt; <strong>rpush seznam1 ctvrty</strong>
+(integer) 4
+</pre>
+
+<p><div class="rs-tip-major">Poznámka: jen pro připomenutí &ndash; do seznamů
+lze prvky přidávat jak na konec, tak vkládat na začátek. Podobně je možné ze
+seznamů prvky vybírat ze začátku i z&nbsp;konce, takže tato struktura je
+v&nbsp;praxi využitelná i jako zásobník (<i>stack</i>), fronta (<i>queue</i>)
+či obousměrná fronta (<i>deque</i>). Pravděpodobně nejčastěji se setkáme
+s&nbsp;použitím fronty.</div></p>
+
+<p>Pokud budeme chtít získat větší množství hodnot (prvků) z&nbsp;tohoto
+seznamu, můžeme použít například příkaz <strong>lrange</strong> (<i>list
+range</i>), kterému zadáme nejnižší a nejvyšší index prvku:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>lrange seznam1 0 1000</strong>
+&nbsp;
+1) "prvni"
+2) "druhy"
+3) "treti"
+4) "ctvrty"
+</pre>
+
+<p>Povšimněte si, jakým způsobem jsou v&nbsp;tomto případě jednotlivé prvky
+vráceny: před každým prvkem je uveden jeho index (nikoli v&nbsp;původním
+seznamu, ale ve vráceném poli!). Samozřejmě vrácené pole nemusí přesně
+odpovídat seznamu uloženému v&nbsp;databázi, protože si prvky můžeme
+vybírat:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>lrange seznam1 2 5</strong>
+&nbsp;
+1) "treti"
+2) "ctvrty"
+</pre>
+
+<p>Prázdné pole se vrátí ve formátu:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>lrange seznam1 100 200</strong>
+&nbsp;
+(empty list or set)
+</pre>
+
+
+
+<p><a name="k03"></a></p>
+<h2 id="k03">3. Hodnoty <strong>nil</strong></h2>
+
+<p>V&nbsp;některých případech musí Redis pracovat s&nbsp;hodnotami typu
+<strong>Null</strong> nebo též <strong>nil</strong>. Samotná konzole Redisu
+dokáže podle kontextu rozpoznat, jakým způsobem se tyto hodnoty mají zobrazit
+uživateli. Ukažme si to na jednoduchém příkladu s&nbsp;množinami. Nejprve
+vytvoříme novou množinu <strong>s</strong> a přidáme do ní jeden prvek.
+Následně se dotážeme na všechny prvky této množiny:</p>
+
+<pre>
+127.0.0.1:6379 &gt;<strong>sadd s 42</strong>
+(integer) 1
+&nbsp;
+127.0.0.1:6379 &gt;<strong>smembers s</strong>
+1) "42"
+</pre>
+
+<p>V&nbsp;dalších dvou krocích prvek odstraníme a znovu se budeme snažit získat
+všechny prvky množiny <strong>s</strong>:</p>
+
+<pre>
+127.0.0.1:6379 &gt;<strong>srem s 42</strong>
+(integer) 1
+&nbsp;
+127.0.0.1:6379 &gt;<strong>smembers s</strong>
+(empty list or set)
+</pre>
+
+<p>Podobně Redis zareaguje při čtení prvku z&nbsp;prázdného seznamu:</p>
+
+<pre>
+127.0.0.1:6379 &gt;<strong>rpush lst 1</strong>
+(nil)
+&nbsp;
+127.0.0.1:6379 &gt;<strong>rpop lst</strong>
+"10"
+&nbsp;
+127.0.0.1:6379 &gt;<strong>rpop lst</strong>
+(nil)
+</pre>
+
+<p>V&nbsp;tomto případě konzole správně zareagovala a napsala informaci o
+prázdném seznamu nebo množině.</p>
+
+<p>Jak jsou však tyto speciální hodnoty uloženy interně, například
+v&nbsp;seznamu? Redis v&nbsp;tomto případě může použít řetězec s&nbsp;délkou
+-1, což je ovšem odlišné od řetězce s&nbsp;nulovou délkou (sémantika je jiná).
+Podrobnosti se dozvíme ve druhé části článku, v&nbsp;níž si popíšeme
+komunikační protokol používaný Redisem.</p>
+
+
+
+<p><a name="k04"></a></p>
+<h2 id="k04">4. Komunikace mezi subsystémy s&nbsp;využitím zpráv</h2>
+
+<p>Jedna z&nbsp;velmi užitečných technologií, kterou najdeme v&nbsp;Redisu, je
+technologie implementující paradigma <i>publish-subscribe</i> (nebo též
+<i>publisher-subscriber</i>). Jedná se o jednu z&nbsp;forem posílání zpráv mezi
+několika subsystémy, které tak mohou pracovat relativně samostatně, mohou být
+nakonfigurovány a administrovány nezávisle na sobě a případná změna
+architektury může být snadnější, než kdyby byly subsystémy propojeny přímo
+(například přes binární API). V&nbsp;praxi se setkáme jak s&nbsp;paradigmatem
+publish-subscribe, tak i s&nbsp;frontami zpráv, ovšem mezi oběma technologiemi
+existuje několik rozdílů a každá se proto používá k&nbsp;odlišným účelům.</p>
+
+<p>Typické vlastnosti front zpráv:</p>
+
+<ol>
+<li>Existuje jeden či několik zdrojů zpráv.</li>
+<li>Příjemců může být taktéž více, ovšem zpráva je typicky získána jen jedním z&nbsp;nich.</li>
+<li>Obecně není zaručeno pořadí doručení zpráv.</li>
+<li>Zpráva je zpracována jen jedenkrát, ovšem pokud ji příjemce nezpracuje, může být doručena dalšímu příjemci.</li>
+<li>Volitelná vlastnost související s&nbsp;předchozím bodem: po nezpracování se zpráva vrací zpět do fronty</li>
+</ol>
+
+<p>Fronty zpráv se používají velmi často například ve chvíli, kdy se
+zpracovávají různé transakce, u nichž není nutné, aby jejich výsledek uživatel
+viděl v&nbsp;reálném čase. Do fronty se pouze uloží všechny informace o tom,
+jaká transakce se má provést a později si tuto operaci z&nbsp;fronty vyzvedne
+nějaký &bdquo;worker&ldquo;.</p>
+
+<p>Typické vlastnosti publish-subscribe:</p>
+
+<ol>
+<li>Existuje jeden či několik zdrojů zpráv.</li>
+<li>Příjemců může být taktéž více, zpráva je doručena všem příjemcům, kteří se k&nbsp;odběru přihlásili.</li>
+<li>Pořadí zpráv je zaručeno.</li>
+<li>Většinou není zaručeno zpracování a ani přijetí zprávy (pokud se příjemce odpojí, zbytku &bdquo;pipeline&ldquo; to nevadí).</li>
+</ol>
+
+<p>Toto paradigma se může použít například při implementaci různých
+komunikačních systémů atd. Příkladem může být chat, kde záleží na pořadí
+doručení zpráv a příjemců je většinou větší množství.</p>
+
+
+
+<p><a name="k05"></a></p>
+<h2 id="k05">5. Podpora pro paradigma publish-subscribe v&nbsp;Redisu</h2>
+
+<p>V&nbsp;Redisu nalezneme následujících šest příkazů, kterými je
+implementováno právě paradigma publish-subscribe:</p>
+
+<table>
+<tr><th>Příkaz</th><th>Stručný popis příkazu</th></tr>
+<tr><td>SUBSCRIBE</td><td>přihlášení se k&nbsp;odebírání jednoho kanálu nebo většího množství kanálů</td></tr>
+<tr><td>UNSUBSCRIBE</td><td>opak předchozího, odhlášení se z&nbsp;odebírání specifikovaných kanálů (popř. ze všech kanálů)</td></tr>
+<tr><td>&nbsp;</td><td>&nbsp;</td></tr>
+<tr><td>PSUBSCRIBE</td><td>odpovídá SUBSCRIBE, ovšem pro jméno kanálu lze použít žolíkové znaky</td></tr>
+<tr><td>PUNSUBSCRIBE</td><td>odpovídá UNSUBSCRIBE, ovšem pro jméno kanálu lze použít žolíkové znaky</td></tr>
+<tr><td>&nbsp;</td><td>&nbsp;</td></tr>
+<tr><td>PUBLISH</td><td>publikování zprávy do zvoleného kanálu</td></tr>
+<tr><td>&nbsp;</td><td>&nbsp;</td></tr>
+<tr><td>PUBSUB</td><td>získání podrobnějších informací o stavu kanálů, přihlášených odebíratelů zpráv atd.</td></tr>
+</table>
+
+<p>U příkazů <strong>psubscribe</strong> a <strong>punsubscribe</strong> je
+možné ve jménu kanálu používat takzvané <i>žolíkové znaky</i>, které
+s&nbsp;velkou pravděpodobností znáte například z&nbsp;BASHe při specifikaci
+souborů. Mezi tyto znaky patří především hvězdička (nahrazuje libovolně dlouhou
+sekvenci znaků), otazník (nahrazuje jeden libovolný znak) a zápis množiny
+znaků: [znaky]. Žolíkové znaky se odlišují od zápisu regulárních výrazů
+především v&nbsp;tom, že &bdquo;*&ldquo; a &bdquo;?&ldquo; před sebou
+neobsahují specifikaci, jakých znaků se náhrada týká (tj.&nbsp;nepíše se
+například &bdquo;.*&ldquo; ale jen &bdquo;*&ldquo;). Více informací je uvedeno
+například na stránce <a
+href="https://en.wikipedia.org/wiki/Glob_(programming)">https://en.wikipedia.org/wiki/Glob_(programming)</a>.</p>
+
+<p><div class="rs-tip-major">Poznámka: protokol používaný Redisem je většinou
+založen na té nejjednodušší možné komunikaci typu dotaz-odpověď. To znamená, že
+každý příkaz poslaný klientem na server je následován odpovědí serveru zpět
+klientovi. Typicky jsou buď klientovi poslána data nebo alespoň celočíselná
+hodnota 0 nebo 1 reprezentující úspěch popř.&nbsp;neúspěch příkazu. Existují
+však tři výjimky, kdy se dotaz-odpověď nepoužívá. První výjimkou jsou takzvané
+<i>pipeline</i>, kdy klient zasílá více příkazů v&nbsp;jednom balíčku. Druhou
+výjimkou je právě použití <i>Pub/Sub</i> kanálů, protože v&nbsp;této chvíli se
+začne používat <i>push</i> protokol &ndash; server sám začíná posílat zprávy ve
+chvíli, kdy jsou publikovány nějakým jiným klientem. Třetí výjimka se objevila
+v&nbsp;páté verzi Redisu a souvisí se <i>streamy</i> a příkazem
+<strong>XREAD</strong>. Popisem streamů se však dnes zabývat
+nebudeme.</div></p>
+
+
+
+<p><a name="k06"></a></p>
+<h2 id="k06">6. Otestování publikování a odběru zpráv z&nbsp;konzole Redisu</h2>
+
+<p>Příkazy, které jsme si ve stručnosti popsali <a href="#k04">v&nbsp;předchozí
+kapitole</a>, si nyní můžeme poměrně snadno vyzkoušet. Vzhledem k&nbsp;tomu, že
+mezi sebou budou komunikovat dva klienti (v&nbsp;praxi dvě klientské aplikace,
+nebo i větší množství aplikací), bude náš příklad používat trojici
+terminálů:</p>
+
+<ol>
+
+<li>V&nbsp;prvním terminálu bude spuštěn <strong>redis-server</strong>. Můžeme
+zde povolit logování.</li>
+
+<li>Ve druhém terminálu spustíme první konzoli Redisu.</li>
+
+<li>Ve třetím terminálu spustíme druhou konzoli Redisu, takže ji budeme moci
+snadno ovládat nezávisle na konzoli první.</li>
+
+</ol>
+
+<p>Spuštění samotného serveru Redisu je ve skutečnosti velmi snadné, o čemž
+jsme se mohli přesvědčit minule. Takže si jen ve stručnosti připomeňme, že
+budeme používat <a
+href="https://github.com/tisnik/presentations/blob/master/redis/redis.conf">konfigurační
+soubor</a> uložený do adresáře <strong>~/redis</strong>. A přímo z&nbsp;tohoto
+adresáře Redis spustíme:</p>
+
+<pre>
+$ <strong>cd ~/redis</strong>
+$ <strong>redis-server redis.conf</strong>
+</pre>
+
+<p><div class="rs-tip-major">Poznámka: skutečně prosím použijte zmíněný
+konfigurační soubor nebo nějakou jeho obdobu. Budete tak mít jistotu, že server
+Redisu bude naslouchat pouze na lokálním rozhraní 127.0.0.1 a nebude tak omylem
+&bdquo;otevřený&ldquo; do celého Internetu.</p></div></p>
+
+<p>Jak jsme si již řekli v&nbsp;předchozím textu, spustíme v&nbsp;dalším
+terminálu konzoli Redisu, do které budeme moci interaktivně zapisovat příkazy a
+zobrazovat si jejich výstup:</p>
+
+<pre>
+$ <strong>redis-cli</strong>
+</pre>
+
+<p>Zcela stejným způsobem bude spuštěna druhá interaktivní konzole
+v&nbsp;dalším (v&nbsp;pořadí již třetím) terminálu:</p>
+
+<pre>
+$ <strong>redis-cli</strong>
+</pre>
+
+<p>Nyní si konečně můžeme vyzkoušet vzájemnou komunikaci mezi oběma klienty
+(které nám nahrazují nějaké skutečné klientské aplikace). V&nbsp;první konzoli
+napíšeme příkaz pro přihlášení ke kanálu, který pro jednoduchost nazveme
+&bdquo;kanál1&ldquo;. Pro přihlášení k&nbsp;odběru zpráv z&nbsp;kanálu se
+používá příkaz <strong>subscribe</strong>, kterému musíme předat jméno
+kanálu:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>subscribe kanal1</strong>
+&nbsp;
+Reading messages... (press Ctrl-C to quit)
+1) "subscribe"
+2) "kanal1"
+3) (integer) 1
+</pre>
+
+<p>Povšimněte si, že se tento příkaz, na rozdíl od všech příkazů, které jsme si
+až doposud uvedli, neukončil, ale konzole se namísto toho přepnula do režimu
+čekání na data, která někdo na kanál &bdquo;kanal1&ldquo; pošle. Dokonce jsme
+již dostali první zprávu typu &bdquo;subscribe&ldquo;, která nás informuje o
+tom, že jsme se přihlásili k&nbsp;odebírání zpráv z&nbsp;kanálu
+&bdquo;kanal1&ldquo;.</p>
+
+<p><div class="rs-tip-major">Poznámka: odpověď serveru má formát pole, čímž se
+vracíme k&nbsp;důvodu, proč byla napsána <a href="#k02">druhá kapitola</a>
+:-)</div></p>
+
+<p>V&nbsp;další konzoli můžeme začít publikovat zprávy do různých kanálů. Opět
+stojí za povšimnutí, že žádný z&nbsp;příkazů Redisu vlastně nekončí nějakou
+závažnou chybou, a to ani když použijeme neexistující kanál &ndash; pouze se
+vrátí hodnota <strong>0</strong>, která značí, že si zprávu nikdo
+nepřevzal:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>publish kanal2 zprava</strong>
+(integer) 0
+&nbsp;
+127.0.0.1:6379&gt; <strong>publish kanal1 zprava</strong>
+(integer) 1
+&nbsp;
+127.0.0.1:6379&gt; <strong>publish kanal1 zprava</strong>
+(integer) 1
+&nbsp;
+127.0.0.1:6379&gt; <strong>publish kanal3 zprava</strong>
+(integer) 0
+</pre>
+
+<p>Zpráv můžeme ve zvoleném kanálu publikovat libovolné množství a všechny
+budou zpracovány klientem, který si zaregistroval odebírání těchto zpráv.</p>
+
+<pre>
+1) "message"
+2) "kanal1"
+3) "zprava"
+1) "message"
+2) "kanal1"
+3) "zprava"
+</pre>
+
+<p>Příkazem <strong>pubsub channels</strong> můžeme získat informaci o tom,
+které kanály jsou v&nbsp;daném okamžiku používány, přesněji řečeno, které
+kanály mají odebíratele (kanál bez odebíratele odpovídá svým chováním zařízení
+<strong>/dev/null</strong>, tj.&nbsp;lze do něj posílat zprávy, které se však
+ztratí):</p>
+
+<pre>
+127.0.0.1:6379 &gt;<strong>pubsub channels</strong>
+&nbsp;
+1) "kanal1"
+</pre>
+
+<p>Dalším užitečným příkazem je příkaz <strong>pubsub numsub</strong> pro
+zjištění počtu odebíratelů nějakého zvoleného kanálu:</p>
+
+<pre>
+127.0.0.1:6379 &gt;<strong>pubsub numsub kanal1</strong>
+&nbsp;
+1) "kanal1"
+2) (integer) 1
+</pre>
+
+<p>Můžeme uvést i více kanálů, včetně kanálů neexistujících či nepoužívaných:</p>
+
+127.0.0.1:6379 &gt;<strong>pubsub numsub kanal1 kanal2 kanal3</strong>
+1) "kanal1"
+2) (integer) 1
+3) "kanal2"
+4) (integer) 0
+5) "kanal3"
+6) (integer) 0
+
+<p><div class="rs-tip-major">Poznámka: povšimněte si, že se v&nbsp;tomto
+případě vrátí pole, kde liché prvky obsahují jména kanálů a sudé prvky počty
+odebíratelů:</div></p>
+
+<p>V&nbsp;konzoli, kde běží příjemce zpráv, nyní příkaz
+<strong>subscribe</strong> ukončíme způsobem, který nám nabídl přímo klient
+&ndash; stlačením klávesové zkratky <strong>Ctrl+C</strong>:</p>
+
+<pre>
+^C
+$ 
+</pre>
+
+<p>Nyní bude publikace zpráv na kanál &bdquo;kanal1&ldquo; končit sice
+korektně, ale bude se vracet nula, která značí, že si zprávu již nepřevzal
+žádný příjemce:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>publish kanal1 zprava</strong>
+(integer) 0
+</pre>
+
+
+
+<p><a name="k07"></a></p>
+<h2 id="k07">7. Použití paradigmatu publish-subscribe z&nbsp;Pythonu</h2>
+
+<p>Předchozí příklady, které jsme přímo zadávali do dvojice interaktivních
+konzolí Redisu, si samozřejmě můžeme přepsat do Pythonu, protože současná verze
+knihovny <strong>redis-py</strong> přístup <i>publisher-subscriber</i>
+podporuje.</p>
+
+<p>První skript po svém spuštění opublikuje na kanálu &bdquo;kanal1&ldquo;
+deset zpráv, přičemž každá zpráva bude ve formátu &bdquo;zprava #n&ldquo;
+s&nbsp;proměnnou hodnotou <i>n</i>. Mezi publikací jednotlivých zpráv bude
+pauza o délce přibližně jedné sekundy. Samotná publikace je jednoduchá &ndash;
+použijeme přímo metodu <strong>publish</strong> třídy <strong>Redis</strong>
+(či některé třídy odvozené).</p>
+
+<p>Úplný zdrojový kód tohoto příkladu:</p>
+
+<pre>
+import redis
+import time
+&nbsp;
+&nbsp;
+CHANNEL_NAME = "kanal1"
+&nbsp;
+&nbsp;
+def connect(host, port):
+    return redis.Redis(host=host, port=port)
+&nbsp;
+&nbsp;
+def pub(host, port, channel):
+    r = connect(host, port)
+&nbsp;
+    for i in range(0, 11):
+        print("Publishing message to " + channel)
+        message = "zprava #{}".format(i)
+        r.publish(channel, message)
+&nbsp;
+        time.sleep(1)
+&nbsp;
+&nbsp;
+pub("127.0.0.1", 6379, CHANNEL_NAME)
+</pre>
+
+<p>Druhý skript je nepatrně složitější, protože se jedná o implementaci
+příjemce zprávy. Zde se již provádí větší množství operací, především
+registrace ke zvolenému kanálu:</p>
+
+<pre>
+r = connect(host, port)
+pubsub = r.pubsub()
+pubsub.subscribe(channel)
+</pre>
+
+<p>Následně jsou &ndash; zde velmi primitivním způsobem &ndash; zprávy čteny
+v&nbsp;programové smyčce metodou <strong>get_message()</strong>. Pokud se
+nevrátí None, je zpráva vypsána na obrazovku, jinak se klient snaží o další
+čtení z&nbsp;kanálu (což popravdě vypadá dosti neefektivně):</p>
+
+<pre>
+while True:
+    print("Waiting for message published on " + channel)
+    message = pubsub.get_message()
+    if message:
+        print("type {type}  message '{message}'".format(type=message["type"],
+                                                        message=message["data"]))
+    else:
+        time.sleep(1)  # lze snížit
+</pre>
+
+<p>Celá implementace příjemce zpráv může vypadat následovně:</p>
+
+<pre>
+import redis
+import time
+&nbsp;
+&nbsp;
+CHANNEL_NAME = "kanal1"
+&nbsp;
+&nbsp;
+def connect(host, port):
+    return redis.Redis(host=host, port=port)
+&nbsp;
+&nbsp;
+def sub(host, port, channel):
+    r = connect(host, port)
+    pubsub = r.pubsub()
+    pubsub.subscribe(channel)
+&nbsp;
+    while True:
+        print("Waiting for message published on " + channel)
+        message = pubsub.get_message()
+        if message:
+            print("type {type}  message '{message}'".format(type=message["type"],
+                                                            message=message["data"]))
+        else:
+            time.sleep(1)
+&nbsp;
+&nbsp;
+sub("127.0.0.1", 6379, CHANNEL_NAME)
+</pre>
+
+<p>Pokud nyní v&nbsp;samostatném terminálu spustíme skript nazvaný
+<strong>python_sub.py</strong>, měla by se na standardním výstupu nejprve
+objevit zpráva o úspěšném přihlášení do zvoleného kanálu. Tato zpráva může být
+schována mezi informativní řádky &bdquo;Waiting for...&ldquo;. Po přihlášení
+bude skript čekat na zprávy poslané do zvoleného kanálu, takže výstup vypsaný
+na terminál může vypadat například takto:</p>
+
+<pre>
+$ <strong>python3 python_sub.py</strong>
+&nbsp;
+Waiting for message published on kanal1
+Waiting for message published on kanal1
+type subscribe  message '1'
+Waiting for message published on kanal1
+Waiting for message published on kanal1
+Waiting for message published on kanal1
+...
+...
+...
+</pre>
+
+<p>Nyní můžeme v&nbsp;dalším terminálu spustit druhý skript naprogramovaný
+v&nbsp;Pythonu, který bude zprávy (dokumenty) na kanál publikovat:</p>
+
+<pre>
+$ <strong>python3 python_pub.py</strong>
+&nbsp;
+Publishing message to kanal1
+Publishing message to kanal1
+Publishing message to kanal1
+Publishing message to kanal1
+Publishing message to kanal1
+Publishing message to kanal1
+</pre>
+
+<p>Jakmile se předchozí skript spustí, začne první skript vypisovat informace o
+úspěšně přečtené zprávě. Tyto informace mohou být opět proloženy řádky
+&bdquo;Waiting for...&ldquo;:</p>
+
+<pre>
+type message  message 'b'zprava #0''
+Waiting for message published on kanal1
+Waiting for message published on kanal1
+type message  message 'b'zprava #1''
+Waiting for message published on kanal1
+Waiting for message published on kanal1
+type message  message 'b'zprava #2''
+Waiting for message published on kanal1
+Waiting for message published on kanal1
+type message  message 'b'zprava #3''
+</pre>
+
+<p>Povšimněte si především toho, že běžné zprávy mají typ nastaven na
+<strong>message</strong>, zatímco první zpráva informující o připojení ke
+kanálu má typ <strong>subscribe</strong>.</p>
+
+<p>Oba skripty ukončíme například s&nbsp;využitím klávesové zkratky
+<strong>Ctrl+C</strong>, popř.&nbsp;se můžeme pokusit se přihlásit do Redisu
+přímo z&nbsp;konzole a na ní sledovat komunikaci ve zvoleném kanálu (to již
+ostatně známe <a href="#k05">z&nbsp;předchozí kapitoly</a>).</p>
+
+
+
+<p><a name="k08"></a></p>
+<h2 id="k08">8. Naprogramování handleru pro čtení publikovaných zpráv</h2>
+
+<p>Předchozí &bdquo;aktivní&ldquo; čekání na zprávy publikované na zvoleném
+kanálu nemusí být pro některé aplikace tím nejlepším řešením. Můžeme ovšem
+využít i handler, tj.&nbsp;(<i>callback</i>) funkci zavolanou ve chvíli, kdy je
+zpráva přijata. Zajímavé je, že ani v&nbsp;této chvíli se programové smyčky
+zpracovávající jednotlivé zprávy nezbavíme, což je vidět na následujícím
+příkladu upraveného klienta-příjemce zpráv. Samotné přihlášení k&nbsp;odběru
+zpráv z&nbsp;kanálu se změnilo tak, že metodě <strong>subscribe</strong>
+předáme <i>keyword</i> parametr pojmenovaný stejně jako kanál. Hodnotou pak
+bude reference na callback funkci (handler):</p>
+
+<pre>
+pubsub.subscribe(**{channel: handler})
+</pre>
+
+<p><div class="rs-tip-major">Poznámka: tuto syntaxi volání musíme použít
+z&nbsp;toho důvodu, že jméno kanálu je uloženo v&nbsp;proměnné a není tedy
+reprezentováno přímo konstantou, která by nám umožnila jednodušší
+zápis.</div></p>
+
+<p>Samotná implementace handleru je jednoduchá, protože se pouze vypíše typ
+zprávy a vlastní (textová) data zprávy:</p>
+
+<pre>
+def handler(message):
+    print("type {type}  message '{message}'".format(type=message["type"],
+                                                    message=message["data"]))
+</pre>
+
+<p>Smyčku pro detekci nových zpráv už musíme implementovat sami, ovšem
+s&nbsp;tím, že do větve <strong>if message</strong> se ve skutečnosti řízení
+dostane pouze jedenkrát, a to při přihlášení do kanálu:</p>
+
+<pre>
+while True:
+    message = pubsub.get_message()
+    if message:
+        print(message)
+    else:
+        time.sleep(1)
+</pre>
+
+<p>Výsledný zdrojový kód upraveného příjemce zpráv na zvoleném kanálu může
+vypadat takto:</p>
+
+<pre>
+import redis
+import time
+&nbsp;
+&nbsp;
+CHANNEL_NAME = "kanal1"
+&nbsp;
+&nbsp;
+def connect(host, port):
+    return redis.Redis(host=host, port=port)
+&nbsp;
+&nbsp;
+def handler(message):
+    print("type {type}  message '{message}'".format(type=message["type"],
+                                                    message=message["data"]))
+&nbsp;
+&nbsp;
+def sub(host, port, channel):
+    r = connect(host, port)
+    pubsub = r.pubsub()
+    pubsub.subscribe(**{channel: handler})
+    while True:
+        message = pubsub.get_message()
+        if message:
+            print(message)
+        else:
+            time.sleep(1)
+&nbsp;
+&nbsp;
+sub("127.0.0.1", 6379, CHANNEL_NAME)
+</pre>
+
+<p>Pokud nyní klienta spustíme a současně začneme do kanálu
+&bdquo;kanal1&ldquo; posílat zprávy, klient si je přečte a vypíše jejich
+obsah:</p>
+
+<pre>
+$ <strong>python3 python_sub_handler.py</strong>
+&nbsp;
+{'type': 'subscribe', 'pattern': None, 'channel': b'kanal1', 'data': 1}
+type message  message 'b'zprava #0''
+type message  message 'b'zprava #1''
+type message  message 'b'zprava #2''
+type message  message 'b'zprava #3''
+type message  message 'b'zprava #4''
+type message  message 'b'zprava #5''
+type message  message 'b'zprava #6''
+</pre>
+
+<p><div class="rs-tip-major">Poznámka: opět si povšimněte, že první zprávou,
+kterou dostaneme, je informace o úspěšném přihlášení ke kanálu. Je to současně
+jediná zpráva, která není zpracována handlerem.</div></p>
+
+
+
+<p><a name="k09"></a></p>
+<h2 id="k09">9. Ignorování zpráv o přihlášení a odhlášení z&nbsp;kanálu</h2>
+
+<p>V&nbsp;některých případech nám může vadit implicitní chování Redisu při
+přihlášení k&nbsp;odebírání zpráv z&nbsp;nějakého kanálu. V&nbsp;tomto případě
+totiž odběratel dostane na začátku speciální zprávu o tom, že byl ke kanálu
+přihlášen:</p>
+
+<pre>
+{'type': 'subscribe', 'pattern': None, 'channel': b'kanal1', 'data': 1}
+</pre>
+
+<p>Řešení je jednoduché &ndash; postačuje metodě <strong>pubsub()</strong>
+předat pojmenovaný parametr <strong>ignore_subscribe_messages</strong> a
+nastavit ho na hodnotu <strong>True</strong>:</p>
+
+<pre>
+r = connect(host, port)
+pubsub = r.pubsub(ignore_subscribe_messages=True)
+pubsub.subscribe(channel)
+</pre>
+
+<p>Upravený příklad může vypadat následovně:</p>
+
+<pre>
+import redis
+import time
+&nbsp;
+&nbsp;
+CHANNEL_NAME = "kanal1"
+&nbsp;
+&nbsp;
+def connect(host, port):
+    return redis.Redis(host=host, port=port)
+&nbsp;
+&nbsp;
+def sub(host, port, channel):
+    r = connect(host, port)
+    pubsub = r.pubsub(ignore_subscribe_messages=True)
+    pubsub.subscribe(channel)
+&nbsp;
+    while True:
+        message = pubsub.get_message()
+        if message:
+            print("type {type}  message '{message}'".format(type=message["type"],
+                                                            message=message["data"]))
+        else:
+            time.sleep(1)
+&nbsp;
+&nbsp;
+sub("127.0.0.1", 6379, CHANNEL_NAME)
+</pre>
+
+<p>Po spuštění tohoto příkladu se již první typ zprávy nikdy neobjeví:</p>
+
+<pre>
+$ <strong>python3 python_sub_ignore_noise.py</strong>
+&nbsp;
+type message  message 'b'zprava #0''
+type message  message 'b'zprava #1''
+type message  message 'b'zprava #2''
+type message  message 'b'zprava #3''
+type message  message 'b'zprava #4''
+</pre>
+
+
+
+<p><a name="k10"></a></p>
+<h2 id="k10">10. Chování v&nbsp;případě, že je klient odebírající zprávy pomalý</h2>
+
+<p>V&nbsp;předchozích příkladech jsme se vlastně nezabývali situací, která je
+však poměrně běžná: příjemce zprávy (<i>subscriber</i>) nedokáže příchozí data
+zpracovat dostatečně rychle a je tedy pomalejší, než odesílatel zprávy
+(<i>publisher</i>). Toto chování si můžeme velmi snadno odsimulovat nepatrnou
+úpravou skriptů, s&nbsp;nimiž jsme se seznámili v&nbsp;předchozích
+kapitolách:</p>
+
+<p>Skript, který publikuje zprávy s&nbsp;velkou rychlostí:</p>
+
+<pre>
+import redis
+import time
+&nbsp;
+&nbsp;
+CHANNEL_NAME = "kanal1"
+&nbsp;
+&nbsp;
+def connect(host, port):
+    return redis.Redis(host=host, port=port)
+&nbsp;
+&nbsp;
+def pub(host, port, channel):
+    r = connect(host, port)
+&nbsp;
+    for i in range(0, 21):
+        print("Publishing message to " + channel)
+        message = "zprava #{}".format(i)
+        r.publish(channel, message)
+&nbsp;
+        time.sleep(0.001)
+&nbsp;
+&nbsp;
+pub("127.0.0.1", 6379, CHANNEL_NAME)
+</pre>
+
+<p>Skript, který sice zprávy odebírá, ale dokáže přečíst maximálně jednu zprávu
+za sekundu:</p>
+
+<pre>
+import redis
+import time
+&nbsp;
+&nbsp;
+CHANNEL_NAME = "kanal1"
+&nbsp;
+&nbsp;
+def connect(host, port):
+    return redis.Redis(host=host, port=port)
+&nbsp;
+&nbsp;
+def sub(host, port, channel):
+    r = connect(host, port)
+    pubsub = r.pubsub(ignore_subscribe_messages=True)
+    pubsub.subscribe(channel)
+&nbsp;
+    while True:
+        message = pubsub.get_message()
+        if message:
+            print("type {type}  message '{message}'".format(type=message["type"],
+                                                            message=message["data"]))
+        time.sleep(1)
+&nbsp;
+&nbsp;
+sub("127.0.0.1", 6379, CHANNEL_NAME)
+</pre>
+
+<p>Můžete se sami přesvědčit, že i v&nbsp;tomto případě bude Redis pracovat
+podle předpokladů tím nejlepším možným způsobem:</p>
+
+<ol>
+<li>Odesílatel své zprávy bez problému odpublikuje svojí rychlostí a není nijak zdržován.</li>
+<li>Příjemce bude zprávy dostávat tak rychle, jak si sám určí, tj.&nbsp;jak rychle dokáže volat metodu <strong>get_message</strong>.</li>
+<li>V&nbsp;mezičase budou zprávy uloženy v&nbsp;paměti Redisu.</li>
+</ol>
+
+<p>Ve skutečnosti si musíme dát pozor na to, že zprávy nebudou zachovány při
+restartu Redisu, tj.&nbsp;není zde implementováno stejné chování, jaké můžeme
+znát z&nbsp;klasických front zpráv. Pokud potřebujete zajistit chování fronty,
+může se použít nějaká knihovna postavená nad Redisem (těmito knihovnami se
+budeme zabývat příště).</p>
+
+
+
+<p><a name="k11"></a></p>
+<h2 id="k11">11. Export dat do formátu CSV</h2>
+
+<p>V&nbsp;některých případech může být užitečné přečíst data z&nbsp;Redisu a
+uložit je do formátu CSV. Tuto operaci můžeme provést přímo pomocí nástroje
+<strong>redis-cli</strong>. Podívejme se na několik ukázek:</p>
+
+<pre>
+$ <strong>redis-cli smembers s1</strong>
+1) "10"
+2) "y"
+3) "x"
+4) "30"
+5) "20"
+6) "z"
+7) "42"
+&nbsp;
+$ <strong>redis-cli --csv smembers s1</strong>
+"10","y","x","30","20","z","42"
+</pre>
+
+<pre>
+$ <strong>redis-cli lrange l -10 10</strong>
+1) "10"
+2) "20"
+3) "30"
+&nbsp;
+$ <strong>redis-cli --csv lrange l -10 10</strong>
+"10","20","30"
+</pre>
+
+<p>Výsledek si samozřejmě můžeme přesměrovat do souboru a případná chybová
+hlášení do odlišného souboru:</p>
+
+<pre>
+$ <strong>redis-cli --csv lrange l -10 10 > output.csv 2> errors.txt</strong>
+</pre>
+
+<p>Pro export většího množství záznamů je možné použít trik, který je popsán na
+adrese <a
+href="https://rdbtools.com/blog/redis-export-hashes-as-csv-using-cli/">https://rdbtools.com/blog/redis-export-hashes-as-csv-using-cli/</a>:</p>
+
+<pre>
+redis-cli --scan --pattern users:* |\
+grep -e "^users:[^:]*$" |\
+awk '{print "hmget " $0 " id display_name reputation location"}' |\
+redis-cli --csv &gt; users.csv
+</pre>
+
+<p>Výsledek prvního vyhledání (selectu) je zpracován interpretrem
+<strong>awk</strong>, který vygeneruje příkazy pro druhé spuštění nástroje
+<strong>redis-cli</strong>.</p>
+
+
+
+<p><a name="k12"></a></p>
+<h2 id="k12">12. Protokol použitý pro komunikaci se serverem</h2>
+
+<p>Další zajímavou technologií, s&nbsp;nímž se můžete setkat, je samotný
+protokol použitý pro přenos dat mezi serverem Redisu a jednotlivými klienty,
+kteří se k&nbsp;serveru připojují. Tento protokol se jmenuje <i>RESP</i> neboli
+<i>REdis Serialization Protocol</i>. Protokol <i>RESP</i> byl navržen
+s&nbsp;ohledem na to, aby byl především:</p>
+
+<ol>
+<li>Jednoduchý na implementaci, a to jak na straně serveru, tak zejména klientů.</li>
+<li>Čitelný i pro člověka.</li>
+<li>Umožňující rychlý a efektivní parsing zpráv na straně klientů.</li>
+</ol>
+
+<p>Se základním použitím tohoto protokolu (dotaz-odpověď) jsme se již seznámili
+a taktéž jsme si řekli, že existují tři výjimky, kdy se jednoduchý systém typu
+dotaz-odpověď nepoužívá. Jedná se o <i>pipeline</i>, o <i>Pub/Sub</i> kanály
+popsané výše a o streamy z&nbsp;Redisu 5.</p>
+
+<p>Podívejme se nyní, jak vypadá standardní komunikace mezi serverem a
+klientem. Samotný dotaz je reprezentován jedním textovým řádkem, ovšem
+zajímavější je formát odpovědi. Redis totiž musí klientovi oznámit, jaký typ
+dat vlastně vrací. Typ odpovědi je jednoznačně určen prvním znakem &ndash; viz
+též následující tabulku:</p>
+
+<table>
+<tr><th>První znak odpovědi</th><th>Význam</th></tr>
+<tr><td>+</td><td>vrací se jednoduchý řetězec, typicky nějaká zpráva (řetězec je jednořádkový)</td></tr>
+<tr><td>-</td><td>příkaz skončil z&nbsp;nějakého důvodu chybou, vrací se informace o chybě</td></tr>
+<tr><td>:</td><td>vrací se celé číslo</td></tr>
+<tr><td>$</td><td>vrací se takzvaný Bulk String, což jsou ve skutečnosti binární data o maximální délce až 512 MB</td></tr>
+<tr><td>*</td><td>vrací se pole</td></tr>
+</table>
+
+
+
+<p><a name="k13"></a></p>
+<h2 id="k13">13. Příkazy posílané serveru</h2>
+
+<p>Příkazy, které jsou posílané serveru, lze reprezentovat dvěma způsoby:</p>
+
+<ol>
+
+<li>Jediný příkaz zapsaný formou řetězce a ukončeného znaky CR LF. Toto je
+ideální formát pro &bdquo;ruční&ldquo; práci se serverem. V&nbsp;praxi si
+vystačíte s&nbsp;nástroji <strong>telnet</strong> (interaktivní práce) nebo
+<strong>ncat</strong> (dávkové zpracování).</li>
+
+<li>Druhý formát příkazu je založen na poli (<i>array</i>) obsahující jako své
+prvky takzvaný bulk stringy, jejichž formát je popsaný <a
+href="#k17">v&nbsp;sedmnácté kapitole</a>. Tento formát je sice složitější,
+ovšem umožňuje, aby se serveru poslalo několik příkazů v&nbsp;jediném dotazu,
+což je samozřejmě rychlejší.</p></li>
+
+</ol>
+
+<p>Pokud nechcete použít <strong>ncat</strong> a přitom si chcete vyzkoušet
+přímou komunikaci se serverem, můžete si naprogramovat jednoduchý skript, který
+se k&nbsp;serveru připojí a pošle mu data přes běžný socket:</p>
+
+<pre>
+from sys import argv, exit
+import time
+import socket
+&nbsp;
+BLOCK_LENGTH = 512
+&nbsp;
+&nbsp;
+def connect(host, port):
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.connect((host, int(port)))
+    return s
+&nbsp;
+&nbsp;
+def call_redis(host, port, command):
+    s = connect(host, port)
+    s.sendall(command.encode())
+    data = s.recv(BLOCK_LENGTH)
+    if data:
+        print(repr(data))
+    s.shutdown(socket.SHUT_WR)
+    s.close()
+&nbsp;
+&nbsp;
+if __name__ == "__main__":
+    if len(argv) &lt; 4:
+        print("usage: call_redis host port command")
+        exit(1)
+&nbsp;
+    cmd = " ".join(argv[3:]) + "\r\n"
+    print(cmd)
+    call_redis(argv[1], argv[2], cmd)
+</pre>
+
+<p>Zde je nutné poznamenat, že skript nedokáže pracovat s&nbsp;odpověďmi
+delšími než jeden blok (zde 512 bajtů, ovšem můžete si nastavit i jinou
+velikost).</p>
+
+<p>Příklad použití:</p>
+
+<pre>
+$ <strong>python call_redis.py localhost 6379 publish kanal1 ahoj</strong>
+</pre>
+
+
+
+<p><a name="k14"></a></p>
+<h2 id="k14">14. Odpověď obsahující jednoduchý řetězec</h2>
+
+<p>Nyní si ve stručnosti popišme, jak vlastně vypadá odpověď serveru
+v&nbsp;případě, že výsledkem dotazu má být jednořádkový text. Jednoduchý
+řetězec vracený serverem může obsahovat prakticky libovolné znaky
+s&nbsp;výjimkou konce řádku. Konec řetězce je rozpoznán podle dvojice znaků CR
+LF neboli "\r\n" (tato dvojice znaků, popř.&nbsp;jeden z&nbsp;těchto znaků,
+bude považován za konec řádku na prakticky všech v&nbsp;současnosti používaných
+operačních systémech, pokud ovšem používají ASCII :-). Příkladem odpovědi
+serveru zprávou reprezentovanou jednoduchým řetězcem může být:</p>
+
+<pre>
+"+OK\r\n"
+</pre>
+
+<p><div class="rs-tip-major">Poznámka: uvozovky nejsou součástí
+řetězce.</div></p>
+
+<p>Můžeme si to vyzkoušet, a to s&nbsp;využitím užitečného nástroje
+<strong>ncat</strong> [<a
+href="http://man7.org/linux/man-pages/man1/ncat.1.html">1</a>], který lze
+použít namísto konzole Redisu. Všechny tři následující příkazy vrací odpověď ve
+formátu jednořádkového řetězce "+OK":</p>
+
+<pre>
+$ <strong>echo "flushall" | ncat localhost 6379</strong>
++OK
+</pre>
+
+<pre>
+$ <strong>echo "flushall async" | ncat localhost 6379</strong>
++OK
+</pre>
+
+<pre>
+$ <strong>echo "memory purge" | ncat localhost 6379</strong>
++OK
+</pre>
+
+
+
+<p><a name="k15"></a></p>
+<h2 id="k15">15. Odpověď vrácená serverem v&nbsp;případě chyby</h2>
+
+<p>V&nbsp;případě, že nějaký příkaz skončil s&nbsp;chybou, opět se vrací
+řetězec, ovšem jeho prvním znakem nyní bude &bdquo;-&ldquo; a nikoli
+&bdquo;+&ldquo;. Klient, který zprávy zpracovává, tedy může použít nějakou
+jednoduchou formu řídicí konstrukce <strong>if/switch</strong> pro rozlišení
+obou sémanticky odlišných výsledků:</p>
+
+<pre>
+"-Chybova zprava\r\n"
+</pre>
+
+<p>Příklad reálných chybových hlášení, které Redis skutečně může posílat:</p>
+
+<pre>
+"-ERR unknown command 'cmd'"
+"-WRONGTYPE Operation against a key holding the wrong kind of value"
+</pre>
+
+<p>Opět si to samozřejmě můžeme otestovat pomocí nástroje
+<strong>ncat</strong>:</p>
+
+<pre>
+$ <strong>echo "Ereš pikloš neméšči huňár scépeň kámoš" | ncat localhost 6379</strong>
+-ERR unknown command 'Ereš'
+</pre>
+
+<p>Prvek nazvaný &bdquo;x&ldquo; obsahuje řetězec, tj.&nbsp;nejedná se o
+množinu:</p>
+
+<pre>
+$ <strong>echo "smembers x" | ncat localhost 6379</strong>
+-WRONGTYPE Operation against a key holding the wrong kind of value
+</pre>
+
+<p>Ve skutečnosti však mnoho příkazů nekončí chybovým hlášením, ale prostým
+zasláním celočíselné hodnoty typu 0 nebo 1, což jsme ostatně mohli vidět už <a
+href="https://www.root.cz/clanky/databaze-redis-nejenom-pro-vyvojare-pouzivajici-python/">v&nbsp;předchozím
+článku</a>.</p>
+
+
+
+<p><a name="k16"></a></p>
+<h2 id="k16">16. Odpověď obsahující celé číslo (<i>integer</i>)</h2>
+
+<p>Dalším typem odpovědi serveru klientovi je zpráva obsahující celé číslo.
+Může se jednat o délku seznamu, počet klientů naslouchajících na nějakém kanálu
+atd. Samotná celočíselná hodnota je přenesena v&nbsp;textové podobě, takže
+jediný rozdíl oproti jednořádkovému řetězci nebo chybové zprávě představuje
+první znak, který u celočíselné odpovědi musí obsahovat dvojtečku. Opět si
+ukažme příklad, jak může odpověď serveru vypadat:</p>
+
+<pre>
+":42\r\n"
+</pre>
+
+<p>Několik příkladů z&nbsp;praxe (příkazy <strong>incr</strong> a
+<strong>llen</strong> jsme si popsali minule):</p>
+
+<pre>
+$ <strong>echo "incr citac" | ncat localhost 6379</strong>
+:1
+&nbsp;
+$ <strong>echo "incr citac" | ncat localhost 6379</strong>
+:2
+&nbsp;
+$ <strong>echo "llen seznam1" | ncat localhost 6379</strong>
+:4
+&nbsp;
+$ <strong>echo "llen seznamX" | ncat localhost 6379</strong>
+:0
+</pre>
+
+<p>Ve skutečnosti se však hodnoty čítačů vracejí formou řetězce! Tj.&nbsp;je
+velký rozdíl mezi návratovou hodnotou příkazu <strong>incr citac</strong> a
+návratovou hodnotou <strong>get citac</strong>. Opět se podívejme na příklady,
+kde pro zjednodušení budeme současně pracovat v&nbsp;konzoli Redisu i
+s&nbsp;příkazem <strong>ncat</strong>.</p>
+
+<p>Konzole Redisu:</p>
+
+<pre>
+127.0.0.1:6379 &gt;<strong>set y 0</strong>
+OK
+&nbsp;
+127.0.0.1:6379 &gt;<strong>INCRBY y 1</strong>
+(integer) 1
+&nbsp;
+127.0.0.1:6379 &gt;<strong>get y</strong>
+"1"
+</pre>
+
+<p>Příkazový řádek:</p>
+
+<pre>
+$ <strong>echo "get y" | ncat localhost 6379</strong>
+$1
+1
+</pre>
+
+<p>Konzole Redisu:</p>
+
+<pre>
+127.0.0.1:6379 &gt;<strong>set x 0</strong>
+OK
+&nbsp;
+127.0.0.1:6379 &gt;<strong>INCRBYFLOAT x 0.5</strong>
+"0.5"
+&nbsp;
+127.0.0.1:6379 &gt;<strong>get x</strong>
+"0.5"
+</pre>
+
+<p>Příkazový řádek:</p>
+
+<pre>
+$ <strong>echo "get x" | ncat localhost 6379</strong>
+$3
+0.5
+</pre>
+
+
+
+<p><a name="k17"></a></p>
+<h2 id="k17">17. Odpověď s&nbsp;dlouhým řetězcem resp.&nbsp;blokem bajtů</h2>
+
+<p>Krátké řetězce, které byly popsány v&nbsp;kapitolách <a href="#k14">14</a> a
+<a href="#k15">15</a>, se hodí především pro vrácení kratších textů, například
+informací o provedení či naopak o neprovedení příkazu atd. Systém Redis se však
+používá mj.&nbsp;i pro ukládání rozsáhlejších binárních dat. Tato data se vrací
+ve formě takzvaného <i>bulk stringu</i>, což však může být poněkud matoucí
+označení, protože se ve skutečnosti jedná o binární blok o maximální délce až
+512 MB. Samotnou interpretaci tohoto binárního bloku ponechává systém Redis na
+klientovi (což se může týkat například použití UTF-8 atd.). Tento typ odpovědi
+začíná znakem &bdquo;$&ldquo;. Za tímto znakem je uvedena celková délka řetězce
+oddělená od zbytku odpovědi nám již známou dvojicí znaků CR LF. Délka
+v&nbsp;tomto případě reprezentuje počet <i>bajtů</i>, nikoli počet
+<i>znaků</i>. Následuje sekvence jednotlivých bajtů, která je ukončena znaky CR
+LF (ty jsou ve skutečnosti nadbytečné, neboť si klient může sám programově
+hlídat počet průběžně načítaných bajtů).</p>
+
+<pre>
+"$4\r\ntest\r\n"
+</pre>
+
+<p><div class="rs-tip-major">Poznámka: tento způsob posílání dat je velmi
+praktický, protože klient již dopředu ví, jak velký paměťový blok si bude muset
+naalokovat. Navíc blok může obsahovat libovolné hodnoty bajtů, včetně bajtu
+nulového.</div></p>
+
+<p>V&nbsp;případě, že je zapotřebí reprezentovat prázdný řetězec
+resp.&nbsp;prázdný blok (což může být poměrně častý požadavek), pošle server
+následující sekvenci bajtů:</p>
+
+<pre>
+"$0\r\n\r\n"
+</pre>
+
+<p>Tento typ odpovědi navíc může být použit v&nbsp;těch případech, kdy server
+vrací hodnotu s&nbsp;významem <strong>Null</strong> (žádná požadovaná hodnota
+neexistuje). Taková odpověď je reprezentována řetězcem, jehož délka je rovna
+-1. Povšimněte si, že takový řetězec se od prázdného řetězce odlišuje
+mj.&nbsp;i v&nbsp;tom, že neobsahuje druhou dvojici znaků CR LF:</p>
+
+<pre>
+"$-1\r\n"
+</pre>
+
+<p>Podívejme se na příklad, kdy server vrací bulk string:</p>
+
+<pre>
+$ echo "client list" | ncat localhost 6379 
+&nbsp;
+$148
+id=14 addr=127.0.0.1:54950 fd=9 name= age=0 idle=0 flags=N db=0 sub=0 psub=0 multi=-1 qbuf=0 qbuf-free=32768 obl=0 oll=0 omem=0 events=r cmd=client
+</pre>
+
+<p>Příklad, kdy server vrátí hodnotu odpovídající <strong>Null</strong>:</p>
+
+<pre>
+$ <strong>echo "get foobarbaz" | ncat localhost 6379</strong>
+&nbsp;
+$-1
+</pre>
+
+<p><div class="rs-tip-major">Poznámka: znaky CR LF nyní byly interpretovány
+textovou konzolí/terminálem, takže uvidíme hodnotu $148 s&nbsp;délkou řetězce
+na prvním řádku odpovědi a vlastní řetězec na řádku druhém (popř.&nbsp;na
+řádcích následujících).</div></p>
+
+
+
+<p><a name="k18"></a></p>
+<h2 id="k18">18. Odpověď obsahující pole hodnot</h2>
+
+<p>Nejsložitější je poslední typ odpovědi, kterou server vrací pole hodnot.
+Tato odpověď začíná znakem &bdquo;*&ldquo;, za nímž následuje počet prvků pole,
+který je opět ukončen dvojicí znaků CR LF. Za těmito znaky následují jednotlivé
+prvky pole zakódované způsobem popsaným v&nbsp;předchozích kapitolách (řetězec,
+celočíselná hodnota, bulk string atd.), vždy s&nbsp;uvedením typu.</p>
+
+<p>Nejjednodušší je samozřejmě situace, kdy server vrací prázdné pole, které má
+nulový počet prvků. Takové pole je serverem vráceno ve formátu:</p>
+
+<pre>
+"*0\r\n"
+</pre>
+
+<p>Příklady z&nbsp;praxe pro prázdné množiny:</p>
+
+<pre>
+$ <strong>echo "smembers s0" | ncat localhost 6379</strong>
+*0
+&nbsp;
+$ <strong>echo "smembers s2" | ncat localhost 6379</strong>
+*0
+</pre>
+
+<p>Ukažme si pro ilustraci ještě další typy polí. V&nbsp;případě, že se má
+vrátit pole s&nbsp;několika řetězci typu Bulk String (zde konkrétně se třemi
+řetězci), pošle server klientovi následující odpověď:</p>
+
+<pre>
+"*3\r\n$5\r\nprvni\r\n$5\r\ndruhy\r\n$5\r\ntreti\r\n"
+</pre>
+
+<p>Neboli v&nbsp;čitelnější podobě po přepisu znaků CR LF za konec řádku:</p>
+
+<pre>
+*3
+$5
+prvni
+$5
+druhy
+$5
+treti
+</pre>
+
+<p>Opět příklad z&nbsp;praxe pro množinu se dvěma prvky:</p>
+
+<pre>
+127.0.0.1:6379 &gt;<strong></strong>
+$ echo "smembers s1" | ncat localhost 6379
+*2
+$2
+42
+$3
+100
+</pre>
+
+<p>Server samozřejmě může vrátit i pole celých čísel, a to v&nbsp;podobě:</p>
+
+<pre>
+"*3\r\n:1\r\n:2\r\n:3\r\n"
+</pre>
+
+<p>Opět si můžeme vyzkoušet přepis do čitelnější podoby po přepisu znaků CR LF
+za konec řádku:</p>
+
+<pre>
+*3
+:10
+:20
+:30
+</pre>
+
+<p><div class="rs-tip-major">Poznámka: v&nbsp;této kapitole sice, stejně jako
+je tomu v&nbsp;oficiální dokumentaci Redisu, používáme termín
+&bdquo;pole&ldquo;, ovšem v&nbsp;Redisu se pole spíše podobají klasickým
+seznamům, protože se nemusí jednat o homogenní datový typ. Pokud by například
+pole obsahovalo prvky typu řetězec, celé číslo a bulk string, je to zcela
+legitimní případ a vypadal by následovně:</div></p>
+
+<pre>
+*6
+:10
+$5
+druhy
+:20
+$6
+ctvrty
++OK
+:0
+</pre>
+
+<p>Výsledek sice již není příliš čitelný, ovšem samotný parser může zůstat
+velmi jednoduchý a především rychlý.</p>
+
+<p>Příklad &ndash; získání informací o kanálech a odebíratelech kanálů:</p>
+
+<pre>
+$ <strong>echo "pubsub numsub kanal1 kanal2 kanal3" | ncat localhost 6379</strong>
+*6
+$6
+kanal1
+:1
+$6
+kanal2
+:0
+$6
+kanal3
+:0
+</pre>
+
+<p>Vrácení seznamu řetězců:</p>
+
+<pre>
+$ <strong>echo "lrange seznam1 0 1000" | ncat localhost 6379 </strong>
+*4
+$5
+prvni
+$5
+druhy
+$5
+treti
+$6
+ctvrty
+</pre>
+
+
+
+<p><a name="k19"></a></p>
+<h2 id="k19">19. Repositář s&nbsp;demonstračními příklady</h2>
+
+<p>Zdrojové kódy všech dnes popsaných demonstračních příkladů naprogramovaných
+v&nbsp;Pythonu byly uloženy do Git repositáře, který je dostupný na adrese <a
+href="https://github.com/tisnik/py-redis-examples">https://github.com/tisnik/py-redis-examples</a>
+(stále na GitHubu :-). V&nbsp;případě, že nebudete chtít klonovat celý
+repositář (ten je ovšem &ndash; alespoň prozatím &ndash; velmi malý, dnes má
+doslova několik kilobajtů), můžete namísto toho použít odkazy na jednotlivé
+příklady, které naleznete v&nbsp;následující tabulce:</p>
+
+<table>
+<tr><th>#</th><th>Demonstrační příklad</th><th>Popis</th><th>Cesta</th></tr>
+<tr><td>1</td><td>call_redis.py</td><td>použití socketů při komunikaci se serverem Redisu</td><td><a href="https://github.com/tisnik/py-redis-examples/blob/master/call_redis.py">https://github.com/tisnik/py-redis-examples/blob/master/call_redis.py</a></td></tr>
+<tr><td>2</td><td>python_pub.py</td><td>použití paradigmatu publish-subscibe, část pro publikování zpráv</td><td><a href="https://github.com/tisnik/py-redis-examples/blob/master/python_pub.py">https://github.com/tisnik/py-redis-examples/blob/master/python_pub.py</a></td></tr>
+<tr><td>3</td><td>python_sub.py</td><td>použití paradigmatu publish-subscibe, část pro příjem zpráv</td><td><a href="https://github.com/tisnik/py-redis-examples/blob/master/python_sub.py">https://github.com/tisnik/py-redis-examples/blob/master/python_sub.py</a></td></tr>
+<tr><td>4</td><td>python_sub_handler.py</td><td>handler zpracovávající přijaté zprávy</td><td><a href="https://github.com/tisnik/py-redis-examples/blob/master/python_sub_handler.py">https://github.com/tisnik/py-redis-examples/blob/master/python_sub_handler.py</a></td></tr>
+<tr><td>5</td><td>python_sub_ignore_noise.py</td><td>ignorování zpráv s&nbsp;informací o připojení ke kanálu atd.</td><td><a href="https://github.com/tisnik/py-redis-examples/blob/master/python_sub_ignore_noise.py">https://github.com/tisnik/py-redis-examples/blob/master/python_sub_ignore_noise.py</a></td></tr>
+<tr><td>6</td><td>python_pub_faster.py</td><td>publisher, který publikuje zprávy rychleji, než příjemce</td><td><a href="https://github.com/tisnik/py-redis-examples/blob/master/python_pub_faster.py">https://github.com/tisnik/py-redis-examples/blob/master/python_pub_faster.py</a></td></tr>
+<tr><td>7</td><td>python_sub_slow_read.py</td><td>pomalý příjemce zpráv</td><td><a href="https://github.com/tisnik/py-redis-examples/blob/master/python_sub_slow_read.py">https://github.com/tisnik/py-redis-examples/blob/master/python_sub_slow_read.py</a></td></tr>
+</table>
+
+
+
+<p><a name="k20"></a></p>
+<h2 id="k20">20. Odkazy na Internetu</h2>
+
+<ol>
+
+<li>Stránky projektu Redis<br />
+<a href="https://redis.io/">https://redis.io/</a>
+</li>
+
+<li>Introduction to Redis<br />
+<a href="https://redis.io/topics/introduction">https://redis.io/topics/introduction</a>
+</li>
+
+<li>Try Redis<br />
+<a href="http://try.redis.io/">http://try.redis.io/</a>
+</li>
+
+<li>Redis tutorial, April 2010 (starší, ale pěkně udělaný)<br />
+<a href="https://static.simonwillison.net/static/2010/redis-tutorial/">https://static.simonwillison.net/static/2010/redis-tutorial/</a>
+</li>
+
+<li>Python Redis<br />
+<a href="https://redislabs.com/lp/python-redis/">https://redislabs.com/lp/python-redis/</a>
+</li>
+
+<li>Redis: key-value databáze v paměti i na disku<br />
+<a href="https://www.zdrojak.cz/clanky/redis-key-value-databaze-v-pameti-i-na-disku/">https://www.zdrojak.cz/clanky/redis-key-value-databaze-v-pameti-i-na-disku/</a>
+</li>
+
+<li>Praktický úvod do Redis (1): vaše distribuovaná NoSQL cache<br />
+<a href="http://www.cloudsvet.cz/?p=253">http://www.cloudsvet.cz/?p=253</a>
+</li>
+
+<li>Praktický úvod do Redis (2): transakce<br />
+<a href="http://www.cloudsvet.cz/?p=256">http://www.cloudsvet.cz/?p=256</a>
+</li>
+
+<li>Praktický úvod do Redis (3): cluster<br />
+<a href="http://www.cloudsvet.cz/?p=258">http://www.cloudsvet.cz/?p=258</a>
+</li>
+
+<li>Connection pool<br />
+<a href="https://en.wikipedia.org/wiki/Connection_pool">https://en.wikipedia.org/wiki/Connection_pool</a>
+</li>
+
+<li>Instant Redis Sentinel Setup<br />
+<a href="https://github.com/ServiceStack/redis-config">https://github.com/ServiceStack/redis-config</a>
+</li>
+
+<li>How to install REDIS in LInux<br />
+<a href="https://linuxtechlab.com/how-install-redis-server-linux/">https://linuxtechlab.com/how-install-redis-server-linux/</a>
+</li>
+
+<li>Redis RDB Dump File Format<br />
+<a href="https://github.com/sripathikrishnan/redis-rdb-tools/wiki/Redis-RDB-Dump-File-Format">https://github.com/sripathikrishnan/redis-rdb-tools/wiki/Redis-RDB-Dump-File-Format</a>
+</li>
+
+<li>Lempel–Ziv–Welch<br />
+<a href="https://en.wikipedia.org/wiki/Lempel%E2%80%93Ziv%E2%80%93Welch">https://en.wikipedia.org/wiki/Lempel%E2%80%93Ziv%E2%80%93Welch</a>
+</li>
+
+<li>Redis Persistence<br />
+<a href="https://redis.io/topics/persistence">https://redis.io/topics/persistence</a>
+</li>
+
+<li>Redis persistence demystified<br />
+<a href="http://oldblog.antirez.com/post/redis-persistence-demystified.html">http://oldblog.antirez.com/post/redis-persistence-demystified.html</a>
+</li>
+
+<li>Redis reliable queues with Lua scripting<br />
+<a href="http://oldblog.antirez.com/post/250">http://oldblog.antirez.com/post/250</a>
+</li>
+
+<li>Ost (knihovna)<br />
+<a href="https://github.com/soveran/ost">https://github.com/soveran/ost</a>
+</li>
+
+<li>NoSQL<br />
+<a href="https://en.wikipedia.org/wiki/NoSQL">https://en.wikipedia.org/wiki/NoSQL</a>
+</li>
+
+<li>Shard (database architecture)<br />
+<a href="https://en.wikipedia.org/wiki/Shard_%28database_architecture%29">https://en.wikipedia.org/wiki/Shard_%28database_architecture%29</a>
+</li>
+
+<li>What is sharding and why is it important?<br />
+<a href="https://stackoverflow.com/questions/992988/what-is-sharding-and-why-is-it-important">https://stackoverflow.com/questions/992988/what-is-sharding-and-why-is-it-important</a>
+</li>
+
+<li>What Is Sharding?<br />
+<a href="https://btcmanager.com/what-sharding/">https://btcmanager.com/what-sharding/</a>
+</li>
+
+<li>Redis clients<br />
+<a href="https://redis.io/clients">https://redis.io/clients</a>
+</li>
+
+<li>Category:Lua-scriptable software<br />
+<a href="https://en.wikipedia.org/wiki/Category:Lua-scriptable_software">https://en.wikipedia.org/wiki/Category:Lua-scriptable_software</a>
+</li>
+
+<li>Seriál Programovací jazyk Lua<br />
+<a href="https://www.root.cz/serialy/programovaci-jazyk-lua/">https://www.root.cz/serialy/programovaci-jazyk-lua/</a>
+</li>
+
+<li>Redis memory usage<br />
+<a href="http://nosql.mypopescu.com/post/1010844204/redis-memory-usage">http://nosql.mypopescu.com/post/1010844204/redis-memory-usage</a>
+</li>
+
+<li>Ukázka konfigurace Redisu pro lokální testování<br />
+<a href="https://github.com/tisnik/presentations/blob/master/redis/redis.conf">https://github.com/tisnik/presentations/blob/master/redis/redis.conf</a>
+</li>
+
+<li>Resque<br />
+<a href="https://github.com/resque/resque">https://github.com/resque/resque</a>
+</li>
+
+<li>Nested transaction<br />
+<a href="https://en.wikipedia.org/wiki/Nested_transaction">https://en.wikipedia.org/wiki/Nested_transaction</a>
+</li>
+
+<li>Publish–subscribe pattern<br />
+<a href="https://en.wikipedia.org/wiki/Publish%E2%80%93subscribe_pattern">https://en.wikipedia.org/wiki/Publish%E2%80%93subscribe_pattern</a>
+</li>
+
+<li>Messaging pattern<br />
+<a href="https://en.wikipedia.org/wiki/Messaging_pattern">https://en.wikipedia.org/wiki/Messaging_pattern</a>
+</li>
+
+<li>Using pipelining to speedup Redis queries<br />
+<a href="https://redis.io/topics/pipelining">https://redis.io/topics/pipelining</a>
+</li>
+
+<li>Pub/Sub<br />
+<a href="https://redis.io/topics/pubsub">https://redis.io/topics/pubsub</a>
+</li>
+
+<li>ZeroMQ distributed messaging<br />
+<a href="http://zeromq.org/">http://zeromq.org/</a>
+</li>
+
+<li>Publish/Subscribe paradigm: Why must message classes not know about their subscribers?<br />
+<a href="https://stackoverflow.com/questions/2908872/publish-subscribe-paradigm-why-must-message-classes-not-know-about-their-subscr">https://stackoverflow.com/questions/2908872/publish-subscribe-paradigm-why-must-message-classes-not-know-about-their-subscr</a>
+</li>
+
+<li>Python &amp; Redis PUB/SUB<br />
+<a href="https://medium.com/@johngrant/python-redis-pub-sub-6e26b483b3f7">https://medium.com/@johngrant/python-redis-pub-sub-6e26b483b3f7</a>
+</li>
+
+<li>Message broker<br />
+<a href="https://en.wikipedia.org/wiki/Message_broker">https://en.wikipedia.org/wiki/Message_broker</a>
+</li>
+
+<li>RESP Arrays<br />
+<a href="https://redis.io/topics/protocol#array-reply">https://redis.io/topics/protocol#array-reply</a>
+</li>
+
+<li>Redis Protocol specification<br />
+<a href="https://redis.io/topics/protocol">https://redis.io/topics/protocol</a>
+</li>
+
+<li>Redis Pub/Sub: Intro Guide<br />
+<a href="https://www.redisgreen.net/blog/pubsub-intro/">https://www.redisgreen.net/blog/pubsub-intro/</a>
+</li>
+
+<li>Redis Pub/Sub: Howto Guide<br />
+<a href="https://www.redisgreen.net/blog/pubsub-howto/">https://www.redisgreen.net/blog/pubsub-howto/</a>
+</li>
+
+
+<li>Comparing Publish-Subscribe Messaging and Message Queuing<br />
+<a href="https://dzone.com/articles/comparing-publish-subscribe-messaging-and-message">https://dzone.com/articles/comparing-publish-subscribe-messaging-and-message</a>
+</li>
+
+<li>ActiveMQ<br />
+<a href="http://activemq.apache.org/activemq-website/index.html">http://activemq.apache.org/activemq-website/index.html</a>
+</li>
+
+<li>Amazon Simple Queue Service<br />
+<a href="https://aws.amazon.com/sqs/">https://aws.amazon.com/sqs/</a>
+</li>
+
+<li>Apache Kafka<br />
+<a href="https://kafka.apache.org/">https://kafka.apache.org/</a>
+</li>
+
+<li>Cloud Pub/Sub<br />
+<a href="https://cloud.google.com/pubsub/">https://cloud.google.com/pubsub/</a>
+</li>
+
+<li>Introduction to Redis Streams<br />
+<a href="https://redis.io/topics/streams-intro">https://redis.io/topics/streams-intro</a>
+</li>
+
+<li>glob (programming)<br />
+<a href="https://en.wikipedia.org/wiki/Glob_(programming)">https://en.wikipedia.org/wiki/Glob_(programming)</a>
+</li>
+
+</ol>
+
+
+
+<p></p><p></p>
+<p><small>Autor: <a href="http://www.fit.vutbr.cz/~tisnovpa">Pavel Tišnovský</a> &nbsp; 2018</small></p>
+</body>
+</html>
+
