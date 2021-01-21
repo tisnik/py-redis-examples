@@ -1,5 +1,7 @@
 # py-redis-examples
 
+[Articles (written in Czech language) about Redis and py-redis](articles/README.md)
+
 Simple examples howto use the `py-redis` library
 
 ```
