@@ -1,0 +1,1633 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+        "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html>
+<head>
+<title>Proudy  (streams) podporované systémem Redis</title>
+<meta name="Author" content="Pavel Tisnovsky" />
+<meta name="Generator" content="vim" />
+<meta http-equiv="content-type" content="text/html; charset=utf-8" />
+<style type="text/css">
+         body {color:#000000; background:#ffffff;}
+         h1  {font-family: arial, helvetica, sans-serif; color:#ffffff; background-color:#c00000; text-align:center; padding-left:1em}
+         h2  {font-family: arial, helvetica, sans-serif; color:#ffffff; background-color:#0000c0; padding-left:1em; text-align:left}
+         h3  {font-family: arial, helvetica, sans-serif; color:#000000; background-color:#c0c0c0; padding-left:1em; text-align:left}
+         h4  {font-family: arial, helvetica, sans-serif; color:#000000; background-color:#e0e0e0; padding-left:1em; text-align:left}
+         a   {font-family: arial, helvetica, sans-serif;}
+         li  {font-family: arial, helvetica, sans-serif; color:#000000; text-align:justify; width:450px;}
+         ol  {font-family: arial, helvetica, sans-serif; color:#000000; text-align:justify; width:450px;}
+         ul  {font-family: arial, helvetica, sans-serif; color:#000000; text-align:justify; width:450px;}
+         p   {font-family: arial, helvetica, sans-serif; color:#000000; text-align:justify;}
+         pre {background:#e0e0e0}
+</style>
+</head>
+
+<body>
+
+<h1>Proudy  (streams) podporované systémem Redis</h1>
+
+<h3>Pavel Tišnovský</h3>
+
+<p></p>
+
+<h1>Úvodník</h1>
+
+<p>Systém Redis se používá v mnoha oblastech. Může sloužit ve funkci distribuované key-value databáze, vyrovnávací paměti, perzistentního úložiště pro message brokery atd. V Redisu 5 navíc byla představena nová technologie implementující proudy (streams), se kterou se seznámíme.</p>
+
+
+
+<h2>Obsah</h2>
+
+<p><a href="#k01">1. Proudy  (streams) podporované systémem Redis</a></p>
+<p><a href="#k02">2. Překlad a instalace Redisu verze 6.0</a></p>
+<p><a href="#k03">3. Instalace podpůrné knihovny pro Python</a></p>
+<p><a href="#k04">4. Spuštění Redisu a kontrola připojení klienta</a></p>
+<p><a href="#k05">5. Základní operace se streamy přímo z&nbsp;klienta Redisu: vytvoření nové zprávy</a></p>
+<p><a href="#k06">6. Explicitní specifikace ID nových zpráv připojovaných do proudu</a></p>
+<p><a href="#k07">7. Automatické generování ID nových zpráv</a></p>
+<p><a href="#k08">8. Zjištění počtu zpráv v&nbsp;proudu</a></p>
+<p><a href="#k09">9. Režimy přístupu ke zprávám uloženým v&nbsp;proudu</a></p>
+<p><a href="#k10">10. Čtení zpráv bez čekaní konzumenta na nové zprávy: příkaz <strong>XREAD</strong></strong></a></p>
+<p><a href="#k11">11. Čekání na nové zprávy s&nbsp;využitím parametru <strong>BLOCK</strong></a></p>
+<p><a href="#k12">12. Proud ve funkci databáze s&nbsp;časovými značkami: příkazy <strong>XRANGE</strong> a <strong>XREVRANGE</strong></a></p>
+<p><a href="#k13">13. Připojení konzumenta k&nbsp;většímu množství proudů</a></p>
+<p><a href="#k14">14. Základní operace nad proudy z&nbsp;Pythonu</a></p>
+<p><a href="#k15">15. Připojení zprávy či zpráv na konec proudu</a></p>
+<p><a href="#k16">16. Přečtení všech zpráv z&nbsp;proudu</a></p>
+<p><a href="#k17">17. Blokující čekání na příchozí zprávu</a></p>
+<p><a href="#k18">18. Repositář s&nbsp;demonstračními příklady</a></p>
+<p><a href="#k19">19. Předchozí články o Redisu</a></p>
+<p><a href="#k20">20. Odkazy na Internetu</a></p>
+
+
+
+<p><a name="k01"></a></p>
+<h2 id="k01">1. Proudy  (streams) podporované systémem Redis</h2>
+
+<p>Dnes se opět po delším čase budeme zabývat popisem systému <i>Redis</i>
+neboli (v&nbsp;původním významu) <i>Remote Dictionary Server</i>. Navážeme tak
+na články <a
+href="https://www.root.cz/clanky/databaze-redis-nejenom-pro-vyvojare-pouzivajici-python/">Databáze
+Redis (nejenom) pro vývojáře používající Python</a> a <a
+href="https://www.root.cz/clanky/databaze-redis-nejenom-pro-vyvojare-pouzivajici-python-dokonceni/">Databáze
+Redis (nejenom) pro vývojáře používající Python (dokončení)</a>. V&nbsp;rámci
+Redisu verze 5.0 byl představen nový komplexní datový typ pojmenovaný
+<i>stream</i> (proud), který je mj.&nbsp;určen pro ukládání logovacích
+informací (zpráv). Jedná se tedy o strukturu, ke které je možné data (zde
+nazývané zprávy) připojovat na konec operací typu <i>append</i>, přičemž
+jednotlivé připojované zprávy obsahují jednoznačný identifikátor
+z&nbsp;monotonně rostoucí posloupnosti.</p>
+
+<p>Čtení dat z&nbsp;proudu může být provedeno několika způsoby. Buď konzument
+těchto dat čeká na nově vkládané zprávy, zprávy může číst od určitého ID nebo
+může zprávy přečíst pro zadaný rozsah ID. Navíc může zprávy číst větší množství
+konzumentů, kteří buď dostanou všechny zprávy z&nbsp;proudu (<i>fan-out</i>)
+nebo jsou jim zprávy rozdělovány. V&nbsp;Redis Streams nalezneme i podporu pro
+skupiny konzumentů (<i>Consumer Groups</i>), jejichž označení bylo inspirováno
+myšlenkou realizovanou v&nbsp;systému Apache Kafky. Ve skutečnosti se ovšem
+jedná o odlišné techniky, což si ostatně ukážeme v&nbsp;několika demonstračních
+příkladech popsaných v&nbsp;dalším článku. Dnes se však budeme zabývat tou
+nejjednodušší možnou konfigurací &ndash; producenty zpráv, konzumenty, kteří se
+připojí k&nbsp;jednomu proudu a konzumenty, kteří jsou současně připojeni
+k&nbsp;více proudům.</p>
+
+<p>V&nbsp;navazujících kapitolách si popíšeme funkci následujících příkazů
+Redisu, které souvisí s&nbsp;proudy:</p>
+
+<table>
+<tr><th>#</th><th>Příkaz</th><th>Stručný popis</th></tr>
+<tr><td>1</td><td>XADD</td><td>připojení zprávy na konec proudu</td></tr>
+<tr><td>2</td><td>XLEN</td><td>získání počtu zpráv v&nbsp;proudu</td></tr>
+<tr><td>3</td><td>XREAD</td><td>čtení (blokující i neblokující) zpráv z&nbsp;proudu či proudů</td></tr>
+<tr><td>4</td><td>XRANGE</td><td>získání zpráv pro daný rozsah jejich ID</td></tr>
+<tr><td>5</td><td>XREVRANGE</td><td>podobné XRANGE, ovšem zprávy jsou vráceny v&nbsp;opačném pořadí</td></tr>
+</table>
+
+
+
+<p><a name="k02"></a></p>
+<h2 id="k02">2. Překlad a instalace Redisu verze 6.0</h2>
+
+<p><a href="#k01">V&nbsp;úvodní kapitole</a> jsme si řekli, že proudy (streamy)
+byly představeny až v&nbsp;Redisu verze 5. To, jaká verze serveru je aktuálně
+nainstalována, lze zjistit následujícím příkazem:</p>
+
+<pre>
+$ <strong>redis-server --version</strong>
+</pre>
+
+<p><div class="rs-tip-major">Poznámka: alternativně je možné sledovat hlášení
+serveru při jeho spouštění &ndash; viz též <a href="#k04">čtvrtou
+kapitolu</a>.</div></p>
+
+<p>Na mnoha systémech nalezneme stále verzi 4.x (kterou v&nbsp;dnešním článku
+nelze využít) nebo 5.0.x, což je ostatně i případ mnou používaného systému
+Fedora 32:</p>
+
+<pre>
+Redis server v=5.0.9 sha=00000000:0 malloc=jemalloc-5.1.0 bits=64 build=699c550ace009f13
+</pre>
+
+<p>Pokud se v&nbsp;repositářích vaší distribuce z&nbsp;nějakého důvodu
+nenachází novější verze Redisu, lze ji přeložit a nainstalovat přímo ze
+zdrojových kódů. To ve skutečnosti není nic složitého, protože závislosti
+Redisu jsou pouze minimální: základní knihovna <a
+href="https://www.gnu.org/software/libc/">glibc</a> a volitelně též knihovna <a
+href="http://jemalloc.net/">jemalloc</a> (její použití je však možné zakázat,
+což může mít vliv na rychlost práce s&nbsp;pamětí, popř.&nbsp;na požadavky na
+větší množství virtuální paměti).</p>
+
+<p>Stažení zdrojových kódů Redisu 6.0:</p>
+
+<pre>
+$ <strong>wget https://download.redis.io/releases/redis-6.0.10.tar.gz</strong>
+&nbsp;
+--2021-01-21 10:11:24--  https://download.redis.io/releases/redis-6.0.10.tar.gz
+Resolving download.redis.io (download.redis.io)... 45.60.121.1
+Connecting to download.redis.io (download.redis.io)|45.60.121.1|:443... connected.
+HTTP request sent, awaiting response... 200 OK
+Length: 2271970 (2.2M) [application/octet-stream]
+Saving to: ‘redis-6.0.10.tar.gz’
+&nbsp;
+redis-6.0.10.tar.gz 100%[===================&gt;]   2.17M  --.-KB/s    in 0.1s
+&nbsp;
+2021-01-21 10:11:27 (15.5 MB/s) - ‘redis-6.0.10.tar.gz’ saved [2271970/2271970]
+</pre>
+
+<p>Rozbalení tarballu:</p>
+
+<pre>
+$ <strong>tar xvfz redis-6.0.10.tar.gz</strong>
+</pre>
+
+<p>Překlad a instalace (pro jednoduchost se nepoužívá knihovna
+<strong>jmalloc</strong>):</p>
+
+<pre>
+$ <strong>cd redis-6.0.10</strong>
+&nbsp;
+$ <strong>make distclean; make MALLOC=libc; make</strong>
+&nbsp;
+$ <strong>make install</strong>
+</pre>
+
+<p>Kontrola, jaká verze Redisu je nyní k&nbsp;dispozici:</p>
+
+<pre>
+$ <strong>redis-server --version</strong>
+&nbsp;
+Redis server v=6.0.10 sha=00000000:0 malloc=libc bits=64 build=76a7412d0d12cd5d
+</pre>
+
+
+
+<p><a name="k03"></a></p>
+<h2 id="k03">3. Instalace podpůrné knihovny pro Python</h2>
+
+<p>Ve druhé části článku si ukážeme, jakým způsobem je možné s&nbsp;technologií
+proudů pracovat s&nbsp;využitím programovacího jazyka <a
+href="https://www.root.cz/n/python/">Python</a>. K&nbsp;tomuto účelu použijeme
+knihovnu s&nbsp;implementací vhodného rozhraní. Jedná se o relativně malou a
+jednoduše použitelnou knihovnu nazvanou <a
+href="https://github.com/coleifer/walrus/">walrus</a>, která je pochopitelně
+dostupná i přes <a href="https://pypi.org/project/walrus/">PyPi</a>. Instalace
+této knihovny je tedy velmi jednoduchá a lze ji provést (jak je obvyklé)
+příkazem <strong>pip</strong>:</p>
+
+<pre>
+# <strong>pip install walrus</strong>
+</pre>
+
+<p>resp.pouze pro právě přihlášeného uživatele:</p>
+
+<pre>
+$ <strong>pip install --user walrus</strong>
+</pre>
+
+<p>Průběh instalace se žádným podstatným způsobem neliší od instalace dalších
+balíčků dostupných na PyPi. Jedinou závislostí je balíček nazvaný
+<strong>redis</strong>, s&nbsp;jehož použitím jsme se již seznámili
+v&nbsp;předchozích dvou článcích o Redisu (viz též odkazy uvedené <a
+href="#k19">v&nbsp;devatenácté kapitole</a>):</p>
+
+<pre>
+Collecting walrus
+  Downloading https://files.pythonhosted.org/packages/50/15/27c9bde13eec0ac555987d643adb2b39ac0617e6b8d39c4a17256f677c73/walrus-0.8.1.tar.gz (80kB)
+     |████████████████████████████████| 81kB 2.4MB/s
+Requirement already satisfied: redis&gt;=3.0.0 in /usr/local/lib/python3.8/site-packages (from walrus) (3.5.3)
+Installing collected packages: walrus
+    Running setup.py install for walrus ... done
+Successfully installed walrus-0.8.1
+</pre>
+
+<p><div class="rs-tip-major">Poznámka: nenechte se zmást tím, že se instaluje
+balíček <strong>redis</strong> ve verzi 3.0.0 nebo vyšší. Toto je verze
+rozhraní pro Python (tedy konkrétně balíčku <a
+href="https://pypi.org/project/redis/">https://pypi.org/project/redis/</a>,
+jenž v&nbsp;současnosti existuje ve verzi 3.5.3), nikoli verze samotného
+Redisu.</div></p>
+
+<p>Po (doufejme že úspěšné) instalaci by se měly v&nbsp;podadresáři
+<strong>~/.local/lib/python3.x/site-packages</strong> (lokální instalace)
+popř.&nbsp;v&nbsp;adresáři
+<strong>/usr/local/lib/python3.x/site-packages</strong> objevit následující
+podadresáře s&nbsp;výše zmíněnými knihovnami <strong>redis</strong> a
+<strong>walrus</strong>:</p>
+
+<pre>
+drwxr-xr-x. 3 tester tester  171 Jan 21 10:23 redis
+drwxr-xr-x. 2 tester tester  102 Jan 21 10:23 redis-3.5.3.dist-info
+drwxr-xr-x. 7 tester tester 4096 Jan 21 10:24 walrus
+drwxr-xr-x. 2 tester tester  137 Jan 21 10:24 walrus-0.8.1-py3.8.egg-info
+</pre>
+
+<p>Rychlá kontrola instalace přímo z&nbsp;Pythonu:</p>
+
+<pre>
+$ <strong>python</strong>
+&nbsp;
+Python 3.8.6 (default, Sep 25 2020, 00:00:00) 
+[GCC 10.2.1 20200723 (Red Hat 10.2.1-1)] on linux
+Type "help", "copyright", "credits" or "license" for more information.
+&gt;&gt;&gt; <strong>import redis</strong>
+&gt;&gt;&gt; <strong>import walrus</strong>
+&gt;&gt;&gt; <strong>help(walrus)</strong>
+</pre>
+
+<p>Po zadání posledního příkazu by se měla zobrazit nápověda k&nbsp;balíčku
+<strong>walrus</strong>:</p>
+
+<pre>
+Help on package walrus:
+&nbsp;
+NAME
+    walrus - Lightweight Python utilities for working with Redis.
+&nbsp;
+PACKAGE CONTENTS
+    autocomplete
+    cache
+    containers
+    counter
+    database
+    fts
+    graph
+    lock
+    models
+    query
+    rate_limit
+    search (package)
+    streams
+    tests (package)
+    tusks (package)
+    utils
+&nbsp;
+   ...
+   ...
+   ...
+</pre>
+
+
+
+<p><a name="k04"></a></p>
+<h2 id="k04">4. Spuštění Redisu a kontrola připojení klienta</h2>
+
+<p>V&nbsp;dalších kapitolách se předpokládá, že se klienti budou připojovat
+k&nbsp;běžícímu serveru Redisu, a to na standardním portu
+<strong>6379</strong>. Chování serveru, volba úložiště dat, jeho dostupnost i
+mimo lokální síť atd. jsou pochopitelně plně konfigurovatelné. O několika
+důležitých konfiguračních volbách jsme se již zmínili <a
+href="https://www.root.cz/clanky/databaze-redis-nejenom-pro-vyvojare-pouzivajici-python/#k03">v&nbsp;tomto
+textu</a> (ovšem určeném ještě pro Redis 4.x). Samotný server se spouští
+příkazem <strong>redis-server</strong>:</p>
+
+<pre>
+$ <strong>redis-server</strong>
+</pre>
+
+<p>Po spuštění by se měla vypsat informace o verzi Redisu, použitém
+konfiguračním souboru (ve výpisu níže není konfigurační soubor specifikován) a
+především o portu, ke kterému je možné se připojit z&nbsp;klientů:</p>
+
+<pre>
+20676:C 21 Jan 2021 12:02:45.527 # oO0OoO0OoO0Oo Redis is starting oO0OoO0OoO0Oo
+20676:C 21 Jan 2021 12:02:45.527 # Redis version=6.0.10, bits=64, commit=00000000, modified=0, pid=20676, just started
+20676:C 21 Jan 2021 12:02:45.527 # Warning: no config file specified, using the default config. In order to specify a config file use redis-server /path/to/redis.conf
+20676:M 21 Jan 2021 12:02:45.528 * Increased maximum number of open files to 10032 (it was originally set to 1024).
+                _._
+           _.-``__ ''-._
+      _.-``    `.  `_.  ''-._           Redis 6.0.10 (00000000/0) 64 bit
+  .-`` .-```.  ```\/    _.,_ ''-._
+ (    '      ,       .-`  | `,    )     Running in standalone mode
+ |`-._`-...-` __...-.``-._|'` _.-'|     Port: 6379
+ |    `-._   `._    /     _.-'    |     PID: 20676
+  `-._    `-._  `-./  _.-'    _.-'
+ |`-._`-._    `-.__.-'    _.-'_.-'|
+ |    `-._`-._        _.-'_.-'    |           http://redis.io
+  `-._    `-._`-.__.-'_.-'    _.-'
+ |`-._`-._    `-.__.-'    _.-'_.-'|
+ |    `-._`-._        _.-'_.-'    |
+  `-._    `-._`-.__.-'_.-'    _.-'
+      `-._    `-.__.-'    _.-'
+          `-._        _.-'
+              `-.__.-'
+
+20676:M 21 Jan 2021 12:02:45.530 # <strong>Server initialized</strong>
+20676:M 21 Jan 2021 12:02:45.530 # WARNING overcommit_memory is set to 0! Background save may fail under low memory condition. To fix this issue add 'vm.overcommit_memory = 1' to /etc/sysctl.conf and then reboot or run the command 'sysctl vm.overcommit_memory=1' for this to take effect.
+20676:M 21 Jan 2021 12:02:45.530 * Loading RDB produced by version 6.0.10
+20676:M 21 Jan 2021 12:02:45.531 * RDB age 5938 seconds
+20676:M 21 Jan 2021 12:02:45.531 * RDB memory usage when created 0.84 Mb
+20676:M 21 Jan 2021 12:02:45.531 * DB loaded from disk: 0.000 seconds
+20676:M 21 Jan 2021 12:02:45.531 * <strong>Ready to accept connections</strong>
+</pre>
+
+<p>Pokud je server spuštěn v&nbsp;samostatném terminálu, je ho možné ukončit
+buď klávesovou zkratkou Ctrl+C nebo (jak je to běžné) příkazem
+<strong>kill</strong>:</p>
+
+<pre>
+<strong>^C</strong>
+20676:signal-handler (1611248833) Received SIGINT scheduling shutdown...
+20676:M 21 Jan 2021 12:07:13.469 # User requested shutdown...
+20676:M 21 Jan 2021 12:07:13.469 * Saving the final RDB snapshot before exiting.
+20676:M 21 Jan 2021 12:07:13.471 * DB saved on disk
+20676:M 21 Jan 2021 12:07:13.471 # Redis is now ready to exit, bye bye...
+</pre>
+
+<p>Nyní se k&nbsp;serveru zkusíme připojit ze standardního klienta:</p>
+
+<pre>
+$ <strong>redis-cli</strong>
+</pre>
+
+<p>Prakticky ihned by se měla objevit výzva:</p>
+
+<pre>
+127.0.0.1:6379&gt;
+</pre>
+
+<p>Vyzkoušíme základní komunikaci příkazem <strong>PING</strong>. Server by měl
+odpovědět zprávou <strong>PONG</strong>:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>PING</strong>
+&nbsp;
+PONG
+</pre>
+
+<p>Vypsat si můžeme i konfiguraci serveru, a to konkrétně příkazem
+<strong>INFO</strong>:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>INFO</strong>
+&nbsp;
+# Server
+redis_version:6.0.10
+redis_git_sha1:00000000
+redis_git_dirty:0
+&nbsp;
+...
+...
+...
+&nbsp;
+# CPU
+used_cpu_sys:0.072013
+used_cpu_user:0.033019
+used_cpu_sys_children:0.000000
+used_cpu_user_children:0.000000
+&nbsp;
+# Modules
+&nbsp;
+# Cluster
+cluster_enabled:0
+&nbsp;
+# Keyspace
+db0:keys=1,expires=0,avg_ttl=0
+&nbsp;
+127.0.0.1:6379&gt;
+</pre>
+
+<p><div class="rs-tip-major">Poznámka: pokud předchozí příkazy nepracují
+korektně, je nutné se ujistit, že server běží na zadaném portu, že není
+blokováno připojení atd.</div></p>
+
+
+
+<p><a name="k05"></a></p>
+<h2 id="k05">5. Základní operace se streamy přímo z&nbsp;klienta Redisu: vytvoření nové zprávy</h2>
+
+<p>Nyní, když je spuštěný server Redisu, si můžeme vyzkoušet zcela základní
+operace, které je možné s&nbsp;proudy (streamy) provádět. Prozatím využijeme
+možností nabízené přímo standardním klientem Redisu &ndash; ostatně tento
+klient jsme používali i v&nbsp;předchozích dvou článcích o Redisu. Proud
+(<i>stream</i>) je datová struktura určená pro připojování nových zpráv,
+tj.&nbsp;podporující především operaci typu <i>append</i>. Tato operace je
+realizována příkazem <strong>XADD</strong>:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>help xadd</strong>
+&nbsp;
+  XADD key ID field value [field value ...]
+  summary: Appends a new entry to a stream
+  since: 5.0.0
+  group: stream
+</pre>
+
+<p>Při volání tohoto příkazu se musí uvést především jméno proudu (streamu),
+identifikátor zprávy (viz další text) a následně data, ze kterých se zpráva
+skládá. Ovšem pozor &ndash; na rozdíl od systému Apache Kafka mají zprávy
+v&nbsp;Redisu strukturu, nejedná se tedy o pouhou sekvenci bajtů (což je
+současně výhoda i nevýhoda). Strukturou jsou v&nbsp;tomto kontextu myšleny
+dvojice klíč+hodnota (což je ostatně základní struktura, na které je postaven
+celý Redis, resp.&nbsp;přesněji řečeno jeho původní architektura).</p>
+
+<p>Následuje příklad vytvoření nové zprávy a její připojení do proudu nazvaného
+&bdquo;stream1&ldquo; Identifikátor zprávy je nastaven na hodnotu
+&bdquo;1&ldquo; a po této hodnotě následuje vlastní zpráva zapisovaná dvojicemi
+klíč+hodnota (oddělovačem je vždy bílý znak):</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>xadd stream1 1 x 10 y 20</strong>
+&nbsp;
+"1-0"
+</pre>
+
+<p>Pokud proud &bdquo;stream1&ldquo; neexistuje, je příkazem vytvořen. Příkaz
+vrátí skutečné ID zprávy, které je odvozeno od celého čísla (většího než nula),
+které jsme explicitně předali. O formátu ID se podrobněji zmíníme
+v&nbsp;následujících dvou kapitolách.</p>
+
+
+
+<p><a name="k06"></a></p>
+<h2 id="k06">6. Explicitní specifikace ID nových zpráv připojovaných do proudu</h2>
+
+<p>Identifikátory (ID) zpráv musí v&nbsp;každém proudu tvořit monotonně
+rostoucí číselnou sekvenci. Pokud se například do proudu pokusíme přidat zprávu
+s&nbsp;již existujícím ID, dojde k&nbsp;chybě:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>xadd stream1 1 x 10 y 20</strong>
+&nbsp;
+(error) ERR The ID specified in XADD is equal or smaller than the target stream top item
+</pre>
+
+<p>Přidání dalších zpráv, přičemž mezi ID mohou být libovolně dlouhé kroky
+(nejenom 1):</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>xadd stream1 2 x 10 y 20</strong>
+"2-0"
+&nbsp;
+127.0.0.1:6379&gt; <strong>xadd stream1 4 x 10 y 20</strong>
+"4-0"
+</pre>
+
+<p>Ovšem pokus o vložení zprávy &bdquo;dovnitř&ldquo; proudu opět vede
+k&nbsp;chybě &ndash; tato operace není podporována:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>xadd stream1 3 x 10 y 20</strong>
+&nbsp;
+(error) ERR The ID specified in XADD is equal or smaller than the target stream top item
+</pre>
+
+<p>Ve skutečnosti je ID zprávy (tedy číslo) rozděleno na dvě části oddělené
+pomlčkou. První hodnota typicky obsahuje čas, druhé hodnotě se říká pořadové
+číslo. Pokud jsou první hodnoty ID shodné, musí se zprávy odlišovat pořadovým
+číslem (a opět tvořit monotonně rostoucí řadu). Možné je měnit pouze pořadové
+číslo, a to následujícím způsobem (pro větší přehlednost použijeme jiný
+proud):</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>xadd stream3 0-1 data prvni</strong>
+"0-1"
+&nbsp;
+127.0.0.1:6379&gt; <strong>xadd stream3 0-2 data druhy</strong>
+"0-2"
+&nbsp;
+127.0.0.1:6379&gt; <strong>xadd stream3 0-3 data treti</strong>
+"0-3"
+</pre>
+
+<p>Přeskočení jednoho pořadového čísla je opět možné:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>xadd stream3 0-5 data paty</strong>
+&nbsp;
+"0-5"
+</pre>
+
+<p>Ovšem k&nbsp;nepoužitému pořadovému číslu se již nelze vrátit:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>xadd stream3 0-4 data ctvrty</strong>
+&nbsp;
+(error) ERR The ID specified in XADD is equal or smaller than the target stream top item
+</pre>
+
+<p>A navíc musí být hodnoty první hodnota větší než nula (zatímco pořadové
+číslo nulové být může):</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>xadd stream4 0-0 data 0</strong>
+&nbsp;
+(error) ERR The ID specified in XADD must be greater than 0-0
+</pre>
+
+<p><div class="rs-tip-major">Poznámka: důvodem pro rozdělení ID na dvě části je
+možnost snadnějšího vyhledávání zpráv v&nbsp;časové posloupnosti.</div></p>
+
+
+
+<p><a name="k07"></a></p>
+<h2 id="k07">7. Automatické generování ID nových zpráv</h2>
+
+<p>V&nbsp;naprosté většině případů se však nemusíme zabývat explicitním
+generováním jednoznačných identifikátorů pro nové zprávy, protože tuto činnost
+dokáže systém Redis provádět automaticky. V&nbsp;příkazu <strong>XADD</strong>
+je ovšem nutné namísto ID vložit znak * se speciálním významem &bdquo;vygeneruj
+ID automaticky&ldquo;:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>xadd stream1 * x 1 y 2</strong>
+"1611328029392-0"
+&nbsp;
+127.0.0.1:6379&gt; <strong>xadd stream1 * x 1 y 3</strong>
+"1611328035713-0"
+&nbsp;
+127.0.0.1:6379&gt; <strong>xadd stream1 * x 2 y 3</strong>
+"1611328039051-0"
+</pre>
+
+<p><div class="rs-tip-major">Poznámka: pokud vás zaráží vysoké číslo ID a
+vlastně i jeho formát s&nbsp;pomlčkou zmíněný výše, pak vězte, že je odvozeno
+od časového razítka a konkrétně reprezentuje počet milisekund (nikoli
+<i>pouze</i> sekund), které uběhly od začátku Unixové epochy, tedy od 1.1.1970.
+Za pomlčkou pak následuje pořadové číslo zprávy pro daný časový okamžik. To je
+zvýšeno v&nbsp;případě, že se ve stejné milisekundě zapíše větší množství zpráv
+do stejného proudu. Interně je číslo sekvence uloženo v&nbsp;64 bitech, takže
+celkový počet zpráv zapisovatelných ve stejné milisekundě je prakticky
+neomezený. Ručně se nám pochopitelně nepodaří vložit dvě zprávy ve stejné
+milisekundě, ale programově je to pochopitelně možné &ndash; Redis je
+dostatečně rychlým systémem, aby zpracovat jednotky až desítky zpráv za
+1ms.</div></p>
+
+
+
+<p><a name="k08"></a></p>
+<h2 id="k08">8. Zjištění počtu zpráv v&nbsp;proudu</h2>
+
+<p>Počet zpráv, které jsou v&nbsp;daném proudu uloženy, lze zjistit příkazem
+<strong>XLEN</strong>:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>help xlen</strong>
+&nbsp;
+  XLEN key
+  summary: Return the number of entires in a stream
+  since: 5.0.0
+  group: stream
+</pre>
+
+<p>Počet zpráv v&nbsp;existujících (již vytvořených) proudech:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>xlen stream1</strong>
+(integer) 6
+&nbsp;
+127.0.0.1:6379&gt; <strong>xlen stream3</strong>
+(integer) 4
+</pre>
+
+<p>Počet zpráv v&nbsp;neexistujícím proudu:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>xlen stream2</strong>
+(integer) 0
+</pre>
+
+
+
+<p><a name="k09"></a></p>
+<h2 id="k09">9. Režimy přístupu ke zprávám uloženým v&nbsp;proudu</h2>
+
+<p>Nyní již víme, jakým způsobem je možné na konec proudu připojit novou zprávu
+příkazem <strong>XADD</strong>. Současně se jedná o jedinou operaci určenou pro
+přidání nových zpráv &ndash; ty lze skutečně pouze připojovat na konec a nikoli
+přidávat na začátek či doprostřed proudu. Ovšem čtení zpráv je podporováno
+v&nbsp;několika režimech, z&nbsp;nichž každý se hodí v&nbsp;jiné situaci:</p>
+
+<ol>
+
+<li>Čekání na novou zprávu s&nbsp;její následnou konzumací (zpracováním).
+Pokud je připojeno větší množství konzumentů zpráv, dostanou novou zprávu
+všichni konzumenti. Tato operace, která je podporována i některými klasickými
+message brokery, se nazývá <i>fan-out</i>.</li>
+
+<li>Stejná operace, ovšem provedena současně pro více proudů.</li>
+
+<li>Přečtení zprávy či zpráv se zadaným ID popř.&nbsp;<i>od</i> zadaného ID.
+Částečně se tento režim podobá specifikaci offsetu v&nbsp;systému <i>Apache
+Kafka</i>.</li>
+
+<li>Stejná operace, ovšem provedena současně pro více proudů.</li>
+
+<li>Čekání na nové zprávy, o něž se konzumenti budou dělit. To znamená, že
+každý konzument získá jiné zprávy. Přidáním dalších konzumentů se obecně zvýší
+počet zpráv zpracovatelných za jednotku času. Tento koncept můžeme znát ze
+systému <i>Apache Kafka</i>, kde se objevuje pod názvem skupiny konzumentů
+(<i>Consumer Groups</i>).</li>
+
+<li>Posledním režimem je získání zpráv na základě zadaného časového intervalu.
+K&nbsp;celému proudu se tedy chováme tak, jakoby se jednalo o databázi
+s&nbsp;časovými razítky (podobně ostatně pracuje například i <i>Prometheus</i>
+a <i>Grafana</i>).</li>
+
+</ol>
+
+<p><div class="rs-tip-major">Poznámka: přístup ke zprávě se zadaným ID (operace
+<i>seek</i>) má složitost O(log(N)) a operace čtení zpráv se zadaným intervalem
+(po <i>seeku</i>) má složitost O(M), kde M je počet zpráv
+v&nbsp;intervalu.</div></p>
+
+
+
+<p><a name="k10"></a></p>
+<h2 id="k10">10. Čtení zpráv bez čekání konzumenta na nové zprávy: příkaz <strong>XREAD</strong></h2>
+
+<p>Pro přečtení zprávy z&nbsp;proudu se používá příkaz <strong>READ</strong>,
+jehož konkrétní chování je možné upravit několika parametry:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>help xread</strong>
+&nbsp;
+  XREAD [COUNT count] [BLOCK milliseconds] STREAMS key [key ...] id [id ...]
+  summary: Return never seen elements in multiple streams, with IDs greater than the ones reported by the caller for each stream. Can block.
+  since: 5.0.0
+  group: stream
+</pre>
+
+<p>Při čtení zprávy můžeme zadat identifikátor zprávy, od které má čtení začít
+(přesněji řečeno se zadává identifikátor poslední zpracované zprávy, tedy
+takové zprávy, kterou již přečíst nepotřebujeme). V&nbsp;rámci předchozích
+pokusů jsme do proudu &bdquo;stream3&ldquo; připojili čtyři zprávy, které
+přečteme následovně (od zprávy s&nbsp;ID="0-0", která nemůže existovat, takže
+se začne zprávou s&nbsp;ID="0-1"):</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>xread streams stream3 0</strong>
+1) 1) "stream3"
+   2) 1) 1) "0-1"
+         2) 1) "data"
+            2) "prvni"
+      2) 1) "0-2"
+         2) 1) "data"
+            2) "druhy"
+      3) 1) "0-3"
+         2) 1) "data"
+            2) "treti"
+      4) 1) "0-5"
+         2) 1) "data"
+            2) "paty"
+</pre>
+
+<p>Nejprve se podívejme na příkaz <strong>XREAD</strong>. Tomu se předá
+parametr <strong>streams</strong>, za nímž následuje posloupnost jmen proudů,
+ze kterých chceme číst a za touto posloupností pak posloupnost identifikátorů.
+Počet zadaných jmen proudů a identifikátorů musí být shodný. Prozatím chceme
+přečíst zprávy z&nbsp;jediného proudu &bdquo;stream3&ldquo;, a to od samotného
+od začátku proudu, takže zadáme <strong>strema3 0</strong>, kde "0" je
+expandováno na "0-0".</p>
+
+<p>Výsledkem čtení je relativně složitě strukturované pole (de facto se jedná o
+několik vnořených polí). Každý element tohoto pole obsahuje dvojici (taktéž
+pole), přičemž první element z&nbsp;této dvojice obsahuje jméno proudu
+(v&nbsp;našem případě &bdquo;stream3&ldquo;) a druhý element pak jednotlivé
+zprávy, které jsou opět tvořeny polem. Na této úrovni tedy pole vypadá
+takto:</p>
+
+<pre>
+1) 1) "stream3"
+   2) pole_se_zprávami
+</pre>
+
+<p>A jak je z&nbsp;výpisu patrné, obsahují tato vnitřní pole vždy v&nbsp;prvním
+prvku ID zprávy a v&nbsp;prvku druhém její obsah.</p>
+
+<p><div class="rs-tip-major">Poznámka: jak uvidíme dále, bude interpretace této
+struktury v&nbsp;Pythonu skryta, takže ji většinou ani nebudeme potřebovat znát
+do podrobností.</div></p>
+
+<p>Druhé spuštění příkazu <strong>READ</strong> &bdquo;přehraje&ldquo; ty samé
+zprávy (popř. i nově příchozí zprávy):</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>xread streams stream3 0</strong>
+1) 1) "stream3"
+   2) 1) 1) "0-1"
+         2) 1) "data"
+            2) "prvni"
+      2) 1) "0-2"
+         2) 1) "data"
+            2) "druhy"
+      3) 1) "0-3"
+         2) 1) "data"
+            2) "treti"
+      4) 1) "0-5"
+         2) 1) "data"
+            2) "paty"
+</pre>
+
+
+
+<p><a name="k11"></a></p>
+<h2 id="k11">11. Čekání na nové zprávy s&nbsp;využitím parametru <strong>BLOCK</strong></h2>
+
+<p>Většinou konzumenti na nově příchozí zprávy musí čekat. I tato operace je
+příkazem <strong>XREAD</strong> podporována, a to konkrétně po použití
+parametru <strong>BLOCK</strong>, kterému se předá, kolik milisekund
+(maximálně) se má na zprávu čekat. Hodnota 0 značí čekání bez omezení. Navíc se
+v&nbsp;tomto kontextu setkáme se speciálním ID zprávy označeným dolarem &ndash;
+toto ID znamená poslední zprávu v&nbsp;proudu a tudíž bude operace
+<strong>XREAD</strong> čekat na <i>další</i> zprávu.</p>
+
+<p>Čekání na další zprávu v&nbsp;proudu &bdquo;stream&ldquo; bez časového
+omezení:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>xread BLOCK 0 streams stream3 $</strong>
+</pre>
+
+<p>V&nbsp;dalším terminálu přidáme do proudu &bdquo;stream3&ldquo; novou
+zprávu:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>XADD stream3 * foo 1 bar 2</strong>
+&nbsp;
+"1611329909780-0"
+</pre>
+
+<p>V&nbsp;prvním terminálu (s&nbsp;příkazem <strong>XREAD</strong>) by se ihned
+měl objevit výsledek:</p>
+
+<pre>
+1) 1) "stream3"
+   2) 1) 1) "1611329909780-0"
+         2) 1) "foo"
+            2) "1"
+            3) "bar"
+            4) "2"
+(93.15s)
+127.0.0.1:6379&gt;
+</pre>
+
+<p>Čekání po dobu maximálně jedné sekundy na novou zprávu:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>xread BLOCK 1000 streams stream3 $</strong>
+&nbsp;
+(nil)
+(1.08s)
+</pre>
+
+<p><div class="rs-tip-major">Poznámka: v&nbsp;tomto případě nová zpráva
+nepřišla, takže se vrátila hodnota <strong>nil</strong> po cca oné jedné
+sekundě.</div></p>
+
+
+
+<p><a name="k12"></a></p>
+<h2 id="k12">12. Proud ve funkci databáze s&nbsp;časovými značkami: <strong>XRANGE</strong> a <strong>XREVRANGE</strong></h2>
+
+<p>K&nbsp;proudu je možné přistupovat taktéž jako k&nbsp;databázi, v&nbsp;níž
+jsou jednotlivé záznamy identifikovány časovými značkami, přesněji řečeno
+časovou značkou (Unix time v&nbsp;milisekundách) následovanou pořadím zprávy.
+Vrácení většího množství zpráv v&nbsp;zadaném časovém intervalu zajišťují
+funkce <strong>XRANGE</strong> a <strong>XREVRANGE</strong>:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>help xrange</strong>
+&nbsp;
+  XRANGE key start end [COUNT count]
+  summary: Return a range of elements in a stream, with IDs matching the specified IDs interval
+  since: 5.0.0
+  group: stream
+</pre>
+
+<p>Pro specifikaci &bdquo;od&ldquo; a &bdquo;do&ldquo; je možné použít
+speciální identifikátory &bdquo;-&ldquo; a &bdquo;+&ldquo;, které značí
+&bdquo;minimální možný ID&ldquo; a &bdquo;maximální možný ID&ldquo;. Přečtení
+všech zpráv z&nbsp;proudu &bdquo;stream1&ldquo; se tedy provede takto:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>xrange stream1 - +</strong>
+&nbsp;
+1) 1) "1-0"
+   2) 1) "x"
+      2) "10"
+      3) "y"
+      4) "20"
+2) 1) "2-0"
+   2) 1) "x"
+      2) "10"
+      3) "y"
+      4) "20"
+3) 1) "4-0"
+   2) 1) "x"
+      2) "10"
+      3) "y"
+      4) "20"
+4) 1) "1611328029392-0"
+   2) 1) "x"
+      2) "1"
+      3) "y"
+      4) "2"
+5) 1) "1611328035713-0"
+   2) 1) "x"
+      2) "1"
+      3) "y"
+      4) "3"
+6) 1) "1611328039051-0"
+   2) 1) "x"
+      2) "2"
+      3) "y"
+      4) "3"
+</pre>
+
+<p>Čtení z&nbsp;neexistujícího proudu je možné:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>xrange stream2 - +</strong>
+&nbsp;
+(empty array)
+</pre>
+
+<p>Čtení zpráv z&nbsp;jiného proudu:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>xrange stream3 - +</strong>
+&nbsp;
+1) 1) "0-1"
+   2) 1) "data"
+      2) "prvni"
+2) 1) "0-2"
+   2) 1) "data"
+      2) "druhy"
+3) 1) "0-3"
+   2) 1) "data"
+      2) "treti"
+4) 1) "0-5"
+   2) 1) "data"
+      2) "paty"
+</pre>
+
+<p>Určení konkrétních ID &bdquo;od&ldquo; a &bdquo;do&ldquo;:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>xrange stream3 0-1 0-4</strong>
+&nbsp;
+1) 1) "0-1"
+   2) 1) "data"
+      2) "prvni"
+2) 1) "0-2"
+   2) 1) "data"
+      2) "druhy"
+3) 1) "0-3"
+   2) 1) "data"
+      2) "treti"
+</pre>
+
+<p>ID ve skutečnosti nemusí existovat:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>xrange stream3 0-2 0-10000</strong>
+&nbsp;
+1) 1) "0-2"
+   2) 1) "data"
+      2) "druhy"
+2) 1) "0-3"
+   2) 1) "data"
+      2) "treti"
+3) 1) "0-5"
+   2) 1) "data"
+      2) "paty"
+</pre>
+
+<p>Určení rozsahu ID, v&nbsp;němž se nenachází žádné zprávy:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>xrange stream3 0-100 0-10000</strong>
+&nbsp;
+(empty array)
+</pre>
+
+<p>Omezení počtu vrácených zpráv parametrem <strong>COUNT</strong>:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>xrange stream3 - + count 3</strong>
+&nbsp;
+1) 1) "0-1"
+   2) 1) "data"
+      2) "prvni"
+2) 1) "0-2"
+   2) 1) "data"
+      2) "druhy"
+3) 1) "0-3"
+   2) 1) "data"
+      2) "treti"
+</pre>
+
+<p>Vrácení zpráv v&nbsp;opačném pořadí příkazem <strong>XREVRANGE</strong>:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>XREVRANGE stream1 + -</strong>
+&nbsp;
+1) 1) "1611328039051-0"
+   2) 1) "x"
+      2) "2"
+      3) "y"
+      4) "3"
+2) 1) "1611328035713-0"
+   2) 1) "x"
+      2) "1"
+      3) "y"
+      4) "3"
+3) 1) "1611328029392-0"
+   2) 1) "x"
+      2) "1"
+      3) "y"
+      4) "2"
+4) 1) "4-0"
+   2) 1) "x"
+      2) "10"
+      3) "y"
+      4) "20"
+5) 1) "2-0"
+   2) 1) "x"
+      2) "10"
+      3) "y"
+      4) "20"
+6) 1) "1-0"
+   2) 1) "x"
+      2) "10"
+      3) "y"
+      4) "20"
+</pre>
+
+
+
+<p><a name="k13"></a></p>
+<h2 id="k13">13. Připojení konzumenta k&nbsp;většímu množství proudů</h2>
+
+<p>Jednoho konzumenta je možné připojit k&nbsp;více proudům. V&nbsp;takovém
+případě konzument přečte (operací <strong>READ</strong>) první zprávu
+z&nbsp;libovolného proudu, která odpovídá zadanému ID. Typicky takový konzument
+očekává nové zprávy s&nbsp;blokujícím čekáním na tyto zprávy.
+V&nbsp;popisovaném případě se zadají nejdříve jména proudů a posléze i
+speciální ID zapisované znakem dolaru, které znamenají, že se má přečíst nová
+zpráva (která ještě do proudu nebyla připojena):</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>xread BLOCK 0 streams streamA streamB $ $</strong>
+</pre>
+
+<p>V&nbsp;novém terminálu nyní připojíme zprávu do proudu
+&bdquo;streamA&ldquo;:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>xadd streamA * description messageA1</strong>
+&nbsp;
+"1611339744871-0"
+</pre>
+
+<p>V&nbsp;prvním terminálu uvidíme, že zpráva byla skutečně ihned přečtena:</p>
+
+<pre>
+1) 1) "streamA"
+   2) 1) 1) "1611339744871-0"
+         2) 1) "description"
+            2) "messageA1"
+(61.71s)
+</pre>
+
+<p>Nové spuštění konzumenta:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>xread BLOCK 0 streams streamA streamB $ $</strong>
+</pre>
+
+<p>Nyní připojíme zprávu do druhého proudu &bdquo;streamB&ldquo;:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>xadd streamB * description messageB1</strong>
+&nbsp;
+"1611339766311-0"
+</pre>
+
+<p>Zpráva je konzumentem ihned přečtena:</p>
+
+<pre>
+1) 1) "streamB"
+   2) 1) 1) "1611339766311-0"
+         2) 1) "description"
+            2) "messageB1"
+(8.77s)
+</pre>
+
+<p><div class="rs-tip-major">Poznámka: nyní je zřejmé, proč jsou zprávy
+přečtené operací <strong>READ</strong> vráceny v&nbsp;poli, v&nbsp;němž se vždy
+vyskytuje jméno proudu, ze kterého byla zpráva získána.</div></p>
+
+
+
+<p><a name="k14"></a></p>
+<h2 id="k14">14. Základní operace nad proudy z&nbsp;Pythonu</h2>
+
+<p>Nyní si &ndash; prozatím alespoň ve stručnosti &ndash; popíšeme operace,
+které lze s&nbsp;proudy Redisu provádět v&nbsp;programovacího jazyka Python
+s&nbsp;využitím knihovny <strong>walrus</strong>, kterou jsme nainstalovali
+v&nbsp;rámci <a href="#k03">třetí kapitoly</a>. Tato knihovna nabízí několik
+tříd, z&nbsp;nichž základní se jmenuje <strong>Database</strong>. Tato třída
+představuje rozhraní k&nbsp;Redisu a lze ji inicializovat následovně:</p>
+
+<pre>
+db = Database()
+</pre>
+
+<p><div class="rs-tip-major">Poznámka: pokud nejsou uvedeny žádné parametry, je
+provedeno připojení k&nbsp;lokálně dostupnému Redisu na portu 6379.</div></p>
+
+<p>Následně je možné získat instanci třídy <strong>Stream</strong>, která
+reprezentuje rozhraní k&nbsp;jednomu konkrétnímu proudu. Ten je uveden jako
+parametr konstruktoru této třídy:</p>
+
+<pre>
+stream = <strong>db.Stream("streamX")</strong>
+</pre>
+
+<p>Celý příklad, který získá rozhraní k&nbsp;proudu &bdquo;streamX&ldquo;
+v&nbsp;lokálně běžícím Redisu, může vypadat následovně:</p>
+
+<pre>
+from walrus import Database
+&nbsp;
+db = Database()
+stream = <strong>db.Stream("streamX")</strong>
+&nbsp;
+print(db)
+print(stream)
+</pre>
+
+<p><div class="rs-tip-major">Poznámka: zdrojový kód tohoto příkladu naleznete
+na adrese <a
+href="https://github.com/tisnik/py-redis-examples/blob/master/streams_01_create_stream.py">https://github.com/tisnik/py-redis-examples/blob/master/streams_01_create_stream.py</a>.</div></p>
+
+
+
+<p><a name="k15"></a></p>
+<h2 id="k15">15. Připojení zprávy či zpráv na konec proudu</h2>
+
+<p>Pro připojení zprávy na konec proudu se v&nbsp;Pythonu používá metoda
+nazvaná <strong>add</strong> ze třídy <strong>Stream</strong>. Této metodě,
+která odpovídá příkazu <strong>XADD</strong>, lze v&nbsp;nepovinném parametru
+předat ID zprávy a zejména její obsah, který může být tvořen slovníkem
+s&nbsp;libovolným obsahem. Teoreticky může mít každá zpráva uložená do proudu
+odlišnou strukturu (ta se nekontroluje), v&nbsp;praxi to ovšem není příliš
+časté.</p>
+
+<p>Připojení jediné zprávy do proudu &bdquo;streamX&ldquo; metodou
+<strong>Stream.add</strong>. Připojení je neblokující operací:</p>
+
+<pre>
+from walrus import Database
+&nbsp;
+db = Database()
+stream = db.Stream("streamX")
+&nbsp;
+message_id = <strong>stream.add({"foo": 10,</strong>
+                         <strong>"bar": 20})</strong>
+print(message_id)
+</pre>
+
+<p><div class="rs-tip-major">Poznámka: zdrojový kód tohoto příkladu naleznete
+na adrese <a
+href="https://github.com/tisnik/py-redis-examples/blob/master/streams_02_add_message.py">https://github.com/tisnik/py-redis-examples/blob/master/streams_02_add_message.py</a>.</div></p>
+
+<p>V&nbsp;následujícím příkladu je do proudu nazvaného &bdquo;streamX&ldquo;
+vloženo deset zpráv se stejnou strukturou, ovšem s&nbsp;odlišnými hodnotami
+uloženými pod jednotlivými klíči. Pokud proud neexistuje, tak je automaticky
+vytvořen. ID zpráv je vygenerováno automaticky na základě času jejich vložení
+do proudu:</p>
+
+<pre>
+from walrus import Database
+&nbsp;
+db = Database()
+stream = db.Stream("streamX")
+&nbsp;
+for i in range(0, 10):
+    message_id = <strong>stream.add({"foo": i+1,</strong>
+                             <strong>"bar": i*2})</strong>
+    print(message_id)
+</pre>
+
+<p>Tento příklad po svém spuštění vypíše ID vytvořených (připojených) zpráv.
+Povšimněte si, že se vrací pole bajtů (tedy nikoli řetězec Pythonu 3) a taktéž
+toho, že skript je dostatečně rychlý na to, aby v&nbsp;jedné milisekundě uložil
+více zpráv, které se musí odlišovat svým pořadovým číslem:</p>
+
+<pre>
+b'1611340770619-0'
+b'1611340770620-0'
+b'1611340770620-1'
+b'1611340770620-2'
+b'1611340770620-3'
+b'1611340770620-4'
+b'1611340770621-0'
+b'1611340770621-1'
+b'1611340770621-2'
+b'1611340770621-3'
+</pre>
+
+<p><div class="rs-tip-major">Poznámka: zdrojový kód tohoto příkladu naleznete
+na adrese <a
+href="https://github.com/tisnik/py-redis-examples/blob/master/streams_03_add_messages.py">https://github.com/tisnik/py-redis-examples/blob/master/streams_03_add_messages.py</a>.</div></p>
+
+
+
+<p><a name="k16"></a></p>
+<h2 id="k16">16. Přečtení všech zpráv z&nbsp;proudu</h2>
+
+<p>Nejčastěji prováděnou operací, kterou musí konzumenti (či <i>workeři</i>)
+provádět, je přečtení všech zpráv z&nbsp;vybraného proudu. Tato operace se
+s&nbsp;využitím knihovny <i>walrus</i> ve skutečnosti provede velmi jednoduše,
+protože dostupné zprávy získáme následujícím způsobem ve formě sekvence, kterou
+lze převést na seznam (pokud je k&nbsp;dispozici dostatek paměti) a následně
+s&nbsp;ní provádět všechny operace typu slicingu atd.:</p>
+
+<pre>
+messages = <strong>list(stream)</strong>
+</pre>
+
+<p>Tato operace je neblokující; případné čtení s&nbsp;čekáním na příchod zprávy
+se realizuje metodou <strong>Stream.read</strong> popsanou v&nbsp;navazující
+kapitole.</p>
+
+<pre>
+from walrus import Database
+&nbsp;
+db = Database()
+stream = db.Stream("streamX")
+&nbsp;
+messages = <strong>list(stream)</strong>
+print(messages)
+</pre>
+
+<p><div class="rs-tip-major">Poznámka: zdrojový kód tohoto příkladu naleznete
+na adrese <a
+href="https://github.com/tisnik/py-redis-examples/blob/master/streams_04_read_messages.py">https://github.com/tisnik/py-redis-examples/blob/master/streams_04_read_messages.py</a>.</div></p>
+
+<p>Podívejme se nyní na to, jaký seznam vlastně získáme, pokud přečteme zprávy
+vložené do proudu &bdquo;streamX&ldquo; v&nbsp;rámci předchozího demonstračního
+příkladu:</p>
+
+<pre>
+$ <strong>python3 04_read_messages.py</strong>
+</pre>
+
+<p>Vrácená datová struktura bude mít tento obsah:</p>
+
+<pre>
+[(b'1611340576679-0', {b'foo': b'10', b'bar': b'20'}),
+ (b'1611340770619-0', {b'foo': b'1', b'bar': b'0'}),
+ (b'1611340770620-0', {b'foo': b'2', b'bar': b'2'}),
+ (b'1611340770620-1', {b'foo': b'3', b'bar': b'4'}),
+ (b'1611340770620-2', {b'foo': b'4', b'bar': b'6'}),
+ (b'1611340770620-3', {b'foo': b'5', b'bar': b'8'}),
+ (b'1611340770620-4', {b'foo': b'6', b'bar': b'10'}),
+ (b'1611340770621-0', {b'foo': b'7', b'bar': b'12'}),
+ (b'1611340770621-1', {b'foo': b'8', b'bar': b'14'}),
+ (b'1611340770621-2', {b'foo': b'9', b'bar': b'16'}),
+ (b'1611340770621-3', {b'foo': b'10', b'bar': b'18'})]
+</pre>
+
+<p><div class="rs-tip-major">Poznámka: povšimněte si, že jsme ve skutečnosti
+nezískali zprávy v&nbsp;původní podobě, protože celočíselné hodnoty i řetězce
+byly převedeny na pole bajtů. Serializace a deserializace zpráv tedy může
+obsahovat &bdquo;pasti&ldquo;, na které by měl být vývojář připraven. Na druhou
+stranu nám ale nic nebrání použít pro serializaci a deserializaci zpráv
+knihovnu <a href="https://docs.python.org/3/library/pickle.html">pickle</a>,
+což je téma, kterému se budeme věnovat příště.</div></p>
+
+
+
+<p><a name="k17"></a></p>
+<h2 id="k17">17. Blokující čekání na příchozí zprávu</h2>
+
+<p>Posledním demonstračním příkladem, který si v&nbsp;dnešním článku ukážeme,
+je blokující čekání na příchozí zprávu. Tato operace je provedena metodou
+<strong>read</strong> třídy <strong>Stream</strong>. U čtení můžeme
+specifikovat několik parametrů, především ID již přečtené zprávy a taktéž
+příznak blokující operace s&nbsp;případným určením maximální doby čekání na
+příchod zprávy:</p>
+
+<pre>
+from walrus import Database
+&nbsp;
+db = Database()
+stream = db.Stream("streamX")
+&nbsp;
+message = <strong>stream.read(block=0, last_id="$")</strong>
+print(message)
+</pre>
+
+<p><div class="rs-tip-major">Poznámka: zdrojový kód tohoto příkladu naleznete
+na adrese <a
+href="https://github.com/tisnik/py-redis-examples/blob/master/streams_05_read_new_message.py">https://github.com/tisnik/py-redis-examples/blob/master/streams_05_read_new_message.py</a>.</div></p>
+
+
+
+<p><a name="k18"></a></p>
+<h2 id="k18">18. Repositář s&nbsp;demonstračními příklady</h2>
+
+<p>Zdrojové kódy všech dnes popsaných demonstračních příkladů naprogramovaných
+v&nbsp;Pythonu byly uloženy do Git repositáře, který je dostupný na adrese <a
+href="https://github.com/tisnik/py-redis-examples">https://github.com/tisnik/py-redis-examples</a>
+(stále na GitHubu :-). V&nbsp;případě, že nebudete chtít klonovat celý
+repositář (ten je ovšem &ndash; alespoň prozatím &ndash; velmi malý, dnes má
+doslova několik kilobajtů), můžete namísto toho použít odkazy na jednotlivé
+příklady, které naleznete v&nbsp;následující tabulce:</p>
+
+<table>
+<tr><th>#</th><th>Demonstrační příklad</th><th>Popis</th><th>Cesta</th></tr>
+<tr><td>1</td><td>streams_01_create_stream.py</td><td>připojení k&nbsp;Redisu a konstrukce objektu typu <strong>stream</strong></td><td><a href="https://github.com/tisnik/py-redis-examples/blob/master/streams_01_create_stream.py">https://github.com/tisnik/py-redis-examples/blob/master/streams_01_create_stream.py</a></td></tr>
+<tr><td>2</td><td>streams_02_add_message.py</td><td>přidání zprávy do proudu metodou <strong>add</strong></td><td><a href="https://github.com/tisnik/py-redis-examples/blob/master/streams_02_add_message.py">https://github.com/tisnik/py-redis-examples/blob/master/streams_02_add_message.py</a></td></tr>
+<tr><td>3</td><td>streams_03_add_messages.py</td><td>rychlé přidání několika zpráv do proudu metodou <strong>add</strong></td><td><a href="https://github.com/tisnik/py-redis-examples/blob/master/streams_03_add_messages.py">https://github.com/tisnik/py-redis-examples/blob/master/streams_03_add_messages.py</a></td></tr>
+<tr><td>4</td><td>streams_04_read_messages.py</td><td>neblokující přečtení všech zpráv, které jsou uloženy ve vybraném proudu</td><td><a href="https://github.com/tisnik/py-redis-examples/blob/master/streams_04_read_messages.py">https://github.com/tisnik/py-redis-examples/blob/master/streams_04_read_messages.py</a></td></tr>
+<tr><td>5</td><td>streams_05_read_new_message.py</td><td>blokující čekání na příchod nové zprávy</td><td><a href="https://github.com/tisnik/py-redis-examples/blob/master/streams_05_read_new_message.py">https://github.com/tisnik/py-redis-examples/blob/master/streams_05_read_new_message.py</a></td></tr>
+</table>
+
+
+
+<p><a name="k19"></a></p>
+<h2 id="k19">19. Předchozí články o Redisu</h2>
+
+<p>Se systémem Redis jsme se již na stránkách Rootu setkali, a to dokonce
+několikrát. Buď jsme si popisovali přímo přístup k&nbsp;Redisu z&nbsp;různých
+programovacích jazyků (což je konkrétně případ všech dále zmíněných článků
+zaměřených na jazyky <a href="https://www.root.cz/n/python/">Python</a> a <a
+href="https://www.root.cz/serialy/programovaci-jazyk-go/">Go</a>) nebo byl
+Redis použit ve funkci databáze resp. perzistentního úložiště různými <a
+href="https://www.root.cz/serialy/message-brokery/">message brokery</a> (<a
+href="https://www.root.cz/clanky/celery-system-implementujici-asynchronni-fronty-uloh-pro-python/">Celery</a>,
+<a
+href="https://www.root.cz/clanky/pouziti-nastroje-rq-redis-queue-pro-spravu-uloh-zpracovavanych-na-pozadi/">RQ</a>,
+apod.):</p>
+
+<ol>
+
+<li>Databáze Redis (nejenom) pro vývojáře používající Python<br />
+<a href="https://www.root.cz/clanky/databaze-redis-nejenom-pro-vyvojare-pouzivajici-python/">https://www.root.cz/clanky/databaze-redis-nejenom-pro-vyvojare-pouzivajici-python/</a>
+</li>
+
+<li>Databáze Redis (nejenom) pro vývojáře používající Python (dokončení)<br />
+<a href="https://www.root.cz/clanky/databaze-redis-nejenom-pro-vyvojare-pouzivajici-python-dokonceni/">https://www.root.cz/clanky/databaze-redis-nejenom-pro-vyvojare-pouzivajici-python-dokonceni/</a>
+</li>
+
+<li>Použití databáze Redis v&nbsp;aplikacích naprogramovaných v Go<br />
+<a href="https://www.root.cz/clanky/pouziti-databaze-redis-v-aplikacich-naprogramovanych-v-go/">https://www.root.cz/clanky/pouziti-databaze-redis-v-aplikacich-naprogramovanych-v-go/</a>
+</li>
+
+<li>Použití databáze Redis v&nbsp;aplikacích naprogramovaných v Go (2)<br />
+<a href="https://www.root.cz/clanky/pouziti-databaze-redis-v-aplikacich-naprogramovanych-v-go-2/">https://www.root.cz/clanky/pouziti-databaze-redis-v-aplikacich-naprogramovanych-v-go-2/</a>
+</li>
+
+<li>Použití nástroje RQ (Redis Queue) pro správu úloh zpracovávaných na pozadí<br />
+<a href="https://www.root.cz/clanky/pouziti-nastroje-rq-redis-queue-pro-spravu-uloh-zpracovavanych-na-pozadi/">https://www.root.cz/clanky/pouziti-nastroje-rq-redis-queue-pro-spravu-uloh-zpracovavanych-na-pozadi/</a>
+</li>
+
+</ol>
+
+
+
+<p><a name="k20"></a></p>
+<h2 id="k20">20. Odkazy na Internetu</h2>
+
+<ol>
+
+<li>Repositář knihovny walrus na GitHubu<br />
+<a href="https://github.com/coleifer/walrus/">https://github.com/coleifer/walrus/</a>
+</li>
+
+<li>Knihovna walrus na PyPi<br />
+<a href="https://pypi.org/project/walrus/">https://pypi.org/project/walrus/</a>
+</li>
+
+<li>Stránky projektu Redis<br />
+<a href="https://redis.io/">https://redis.io/</a>
+</li>
+
+<li>Introduction to Redis<br />
+<a href="https://redis.io/topics/introduction">https://redis.io/topics/introduction</a>
+</li>
+
+<li>Try Redis<br />
+<a href="http://try.redis.io/">http://try.redis.io/</a>
+</li>
+
+<li>Redis tutorial, April 2010 (starší, ale pěkně udělaný)<br />
+<a href="https://static.simonwillison.net/static/2010/redis-tutorial/">https://static.simonwillison.net/static/2010/redis-tutorial/</a>
+</li>
+
+<li>Python Redis<br />
+<a href="https://redislabs.com/lp/python-redis/">https://redislabs.com/lp/python-redis/</a>
+</li>
+
+<li>Redis: key-value databáze v paměti i na disku<br />
+<a href="https://www.zdrojak.cz/clanky/redis-key-value-databaze-v-pameti-i-na-disku/">https://www.zdrojak.cz/clanky/redis-key-value-databaze-v-pameti-i-na-disku/</a>
+</li>
+
+<li>Scripting Redis with Lua<br />
+<a href="https://redislabs.com/ebook/part-3-next-steps/chapter-11-scripting-redis-with-lua/">https://redislabs.com/ebook/part-3-next-steps/chapter-11-scripting-redis-with-lua/</a>
+</li>
+
+<li>Redis Lua script for atomic operations and cache stampede<br />
+<a href="https://engineering.linecorp.com/en/blog/redis-lua-scripting-atomic-processing-cache/">https://engineering.linecorp.com/en/blog/redis-lua-scripting-atomic-processing-cache/</a>
+</li>
+
+<li>Redis Lua Scripts - Itamar Haber<br />
+<a href="https://www.youtube.com/watch?v=eReTl8NhHCs">https://www.youtube.com/watch?v=eReTl8NhHCs</a>
+</li>
+
+<li>Building Databases with Redis Tutorial: Lua Script | packtpub.com<br />
+<a href="https://www.youtube.com/watch?v=mMfGNsAr7Bg">https://www.youtube.com/watch?v=mMfGNsAr7Bg</a>
+</li>
+
+<li>Příkaz pro spuštění skriptu v&nbsp;jazyce Lua: EVAL script numkeys key [key ...] arg [arg ...]<br />
+<a href="https://redis.io/commands/eval">https://redis.io/commands/eval</a>
+</li>
+
+<li>Redis Lua scripts debugger<br />
+<a href="https://redis.io/topics/ldb">https://redis.io/topics/ldb</a>
+</li>
+
+<li>Repositář projektu s&nbsp;Redis klientem pro jazyk Go<br />
+<a href="https://github.com/go-redis/redis">https://github.com/go-redis/redis</a>
+</li>
+
+<li>Stránky programovacího jazyka Lua<br />
+<a href="https://www.lua.org/">https://www.lua.org/</a>
+</li>
+
+<li>Programovací jazyk Lua<br />
+<a href="https://www.palmknihy.cz/ucebnice-odborna-literatura/programovaci-jazyk-lua-12651">https://www.palmknihy.cz/ucebnice-odborna-literatura/programovaci-jazyk-lua-12651</a>
+</li>
+
+<li>Programming in Lua<br />
+<a href="https://www.lua.org/pil/">https://www.lua.org/pil/</a>
+</li>
+
+<li>Praktický úvod do Redis (1): vaše distribuovaná NoSQL cache<br />
+<a href="http://www.cloudsvet.cz/?p=253">http://www.cloudsvet.cz/?p=253</a>
+</li>
+
+<li>Praktický úvod do Redis (2): transakce<br />
+<a href="http://www.cloudsvet.cz/?p=256">http://www.cloudsvet.cz/?p=256</a>
+</li>
+
+<li>Praktický úvod do Redis (3): cluster<br />
+<a href="http://www.cloudsvet.cz/?p=258">http://www.cloudsvet.cz/?p=258</a>
+</li>
+
+<li>Connection pool<br />
+<a href="https://en.wikipedia.org/wiki/Connection_pool">https://en.wikipedia.org/wiki/Connection_pool</a>
+</li>
+
+<li>Instant Redis Sentinel Setup<br />
+<a href="https://github.com/ServiceStack/redis-config">https://github.com/ServiceStack/redis-config</a>
+</li>
+
+<li>How to install REDIS in LInux<br />
+<a href="https://linuxtechlab.com/how-install-redis-server-linux/">https://linuxtechlab.com/how-install-redis-server-linux/</a>
+</li>
+
+<li>Redis RDB Dump File Format<br />
+<a href="https://github.com/sripathikrishnan/redis-rdb-tools/wiki/Redis-RDB-Dump-File-Format">https://github.com/sripathikrishnan/redis-rdb-tools/wiki/Redis-RDB-Dump-File-Format</a>
+</li>
+
+<li>Lempel–Ziv–Welch<br />
+<a href="https://en.wikipedia.org/wiki/Lempel%E2%80%93Ziv%E2%80%93Welch">https://en.wikipedia.org/wiki/Lempel%E2%80%93Ziv%E2%80%93Welch</a>
+</li>
+
+<li>Redis Persistence<br />
+<a href="https://redis.io/topics/persistence">https://redis.io/topics/persistence</a>
+</li>
+
+<li>Redis persistence demystified<br />
+<a href="http://oldblog.antirez.com/post/redis-persistence-demystified.html">http://oldblog.antirez.com/post/redis-persistence-demystified.html</a>
+</li>
+
+<li>Redis reliable queues with Lua scripting<br />
+<a href="http://oldblog.antirez.com/post/250">http://oldblog.antirez.com/post/250</a>
+</li>
+
+<li>Ost (knihovna)<br />
+<a href="https://github.com/soveran/ost">https://github.com/soveran/ost</a>
+</li>
+
+<li>NoSQL<br />
+<a href="https://en.wikipedia.org/wiki/NoSQL">https://en.wikipedia.org/wiki/NoSQL</a>
+</li>
+
+<li>Shard (database architecture)<br />
+<a href="https://en.wikipedia.org/wiki/Shard_%28database_architecture%29">https://en.wikipedia.org/wiki/Shard_%28database_architecture%29</a>
+</li>
+
+<li>What is sharding and why is it important?<br />
+<a href="https://stackoverflow.com/questions/992988/what-is-sharding-and-why-is-it-important">https://stackoverflow.com/questions/992988/what-is-sharding-and-why-is-it-important</a>
+</li>
+
+<li>What Is Sharding?<br />
+<a href="https://btcmanager.com/what-sharding/">https://btcmanager.com/what-sharding/</a>
+</li>
+
+<li>Redis clients<br />
+<a href="https://redis.io/clients">https://redis.io/clients</a>
+</li>
+
+<li>Category:Lua-scriptable software<br />
+<a href="https://en.wikipedia.org/wiki/Category:Lua-scriptable_software">https://en.wikipedia.org/wiki/Category:Lua-scriptable_software</a>
+</li>
+
+<li>Seriál Programovací jazyk Lua<br />
+<a href="https://www.root.cz/serialy/programovaci-jazyk-lua/">https://www.root.cz/serialy/programovaci-jazyk-lua/</a>
+</li>
+
+<li>Redis memory usage<br />
+<a href="http://nosql.mypopescu.com/post/1010844204/redis-memory-usage">http://nosql.mypopescu.com/post/1010844204/redis-memory-usage</a>
+</li>
+
+<li>Ukázka konfigurace Redisu pro lokální testování<br />
+<a href="https://github.com/tisnik/presentations/blob/master/redis/redis.conf">https://github.com/tisnik/presentations/blob/master/redis/redis.conf</a>
+</li>
+
+<li>Resque<br />
+<a href="https://github.com/resque/resque">https://github.com/resque/resque</a>
+</li>
+
+<li>Nested transaction<br />
+<a href="https://en.wikipedia.org/wiki/Nested_transaction">https://en.wikipedia.org/wiki/Nested_transaction</a>
+</li>
+
+<li>Publish–subscribe pattern<br />
+<a href="https://en.wikipedia.org/wiki/Publish%E2%80%93subscribe_pattern">https://en.wikipedia.org/wiki/Publish%E2%80%93subscribe_pattern</a>
+</li>
+
+<li>Messaging pattern<br />
+<a href="https://en.wikipedia.org/wiki/Messaging_pattern">https://en.wikipedia.org/wiki/Messaging_pattern</a>
+</li>
+
+<li>Using pipelining to speedup Redis queries<br />
+<a href="https://redis.io/topics/pipelining">https://redis.io/topics/pipelining</a>
+</li>
+
+<li>Pub/Sub<br />
+<a href="https://redis.io/topics/pubsub">https://redis.io/topics/pubsub</a>
+</li>
+
+<li>ZeroMQ distributed messaging<br />
+<a href="http://zeromq.org/">http://zeromq.org/</a>
+</li>
+
+<li>Publish/Subscribe paradigm: Why must message classes not know about their subscribers?<br />
+<a href="https://stackoverflow.com/questions/2908872/publish-subscribe-paradigm-why-must-message-classes-not-know-about-their-subscr">https://stackoverflow.com/questions/2908872/publish-subscribe-paradigm-why-must-message-classes-not-know-about-their-subscr</a>
+</li>
+
+<li>Python &amp; Redis PUB/SUB<br />
+<a href="https://medium.com/@johngrant/python-redis-pub-sub-6e26b483b3f7">https://medium.com/@johngrant/python-redis-pub-sub-6e26b483b3f7</a>
+</li>
+
+<li>Message broker<br />
+<a href="https://en.wikipedia.org/wiki/Message_broker">https://en.wikipedia.org/wiki/Message_broker</a>
+</li>
+
+<li>RESP Arrays<br />
+<a href="https://redis.io/topics/protocol#array-reply">https://redis.io/topics/protocol#array-reply</a>
+</li>
+
+<li>Redis Protocol specification<br />
+<a href="https://redis.io/topics/protocol">https://redis.io/topics/protocol</a>
+</li>
+
+<li>Redis Pub/Sub: Intro Guide<br />
+<a href="https://www.redisgreen.net/blog/pubsub-intro/">https://www.redisgreen.net/blog/pubsub-intro/</a>
+</li>
+
+<li>Redis Pub/Sub: Howto Guide<br />
+<a href="https://www.redisgreen.net/blog/pubsub-howto/">https://www.redisgreen.net/blog/pubsub-howto/</a>
+</li>
+
+<li>Comparing Publish-Subscribe Messaging and Message Queuing<br />
+<a href="https://dzone.com/articles/comparing-publish-subscribe-messaging-and-message">https://dzone.com/articles/comparing-publish-subscribe-messaging-and-message</a>
+</li>
+
+<li>ActiveMQ<br />
+<a href="http://activemq.apache.org/activemq-website/index.html">http://activemq.apache.org/activemq-website/index.html</a>
+</li>
+
+<li>Amazon Simple Queue Service<br />
+<a href="https://aws.amazon.com/sqs/">https://aws.amazon.com/sqs/</a>
+</li>
+
+<li>Apache Kafka<br />
+<a href="https://kafka.apache.org/">https://kafka.apache.org/</a>
+</li>
+
+<li>Cloud Pub/Sub<br />
+<a href="https://cloud.google.com/pubsub/">https://cloud.google.com/pubsub/</a>
+</li>
+
+<li>Introduction to Redis Streams<br />
+<a href="https://redis.io/topics/streams-intro">https://redis.io/topics/streams-intro</a>
+</li>
+
+<li>Introduction to Redis streams with Python<br />
+<a href="http://charlesleifer.com/blog/redis-streams-with-python/">http://charlesleifer.com/blog/redis-streams-with-python/</a>
+</li>
+
+<li>glob (programming)<br />
+<a href="https://en.wikipedia.org/wiki/Glob_(programming)">https://en.wikipedia.org/wiki/Glob_(programming)</a>
+</li>
+
+<li>Microservices: The Rise Of Kafka<br />
+<a href="https://movio.co/blog/microservices-rise-kafka/">https://movio.co/blog/microservices-rise-kafka/</a>
+</li>
+
+<li>Building a Microservices Ecosystem with Kafka Streams and KSQL<br />
+<a href="https://www.confluent.io/blog/building-a-microservices-ecosystem-with-kafka-streams-and-ksql/">https://www.confluent.io/blog/building-a-microservices-ecosystem-with-kafka-streams-and-ksql/</a>
+</li>
+
+<li>An introduction to Apache Kafka and microservices communication<br />
+<a href="https://medium.com/@ulymarins/an-introduction-to-apache-kafka-and-microservices-communication-bf0a0966d63">https://medium.com/@ulymarins/an-introduction-to-apache-kafka-and-microservices-communication-bf0a0966d63</a>
+</li>
+
+<li>kappa-architecture.com<br />
+<a href="http://milinda.pathirage.org/kappa-architecture.com/">http://milinda.pathirage.org/kappa-architecture.com/</a>
+</li>
+
+<li>Questioning the Lambda Architecture<br />
+<a href="https://www.oreilly.com/ideas/questioning-the-lambda-architecture">https://www.oreilly.com/ideas/questioning-the-lambda-architecture</a>
+</li>
+
+<li>Lambda architecture<br />
+<a href="https://en.wikipedia.org/wiki/Lambda_architecture">https://en.wikipedia.org/wiki/Lambda_architecture</a>
+</li>
+
+<li>Kafka &ndash; ecosystem (Wiki)<br />
+<a href="https://cwiki.apache.org/confluence/display/KAFKA/Ecosystem">https://cwiki.apache.org/confluence/display/KAFKA/Ecosystem</a>
+</li>
+
+<li>The Kafka Ecosystem - Kafka Core, Kafka Streams, Kafka Connect, Kafka REST Proxy, and the Schema Registry<br />
+<a href="http://cloudurable.com/blog/kafka-ecosystem/index.html">http://cloudurable.com/blog/kafka-ecosystem/index.html</a>
+</li>
+
+<li>A Kafka Operator for Kubernetes<br />
+<a href="https://github.com/krallistic/kafka-operator">https://github.com/krallistic/kafka-operator</a>
+</li>
+
+<li>Kafka Streams<br />
+<a href="https://cwiki.apache.org/confluence/display/KAFKA/Kafka+Streams">https://cwiki.apache.org/confluence/display/KAFKA/Kafka+Streams</a>
+</li>
+
+<li>Kafka Streams<br />
+<a href="http://kafka.apache.org/documentation/streams/">http://kafka.apache.org/documentation/streams/</a>
+</li>
+
+<li>Kafka Streams (FAQ)<br />
+<a href="https://cwiki.apache.org/confluence/display/KAFKA/FAQ#FAQ-Streams">https://cwiki.apache.org/confluence/display/KAFKA/FAQ#FAQ-Streams</a>
+</li>
+
+<li>What are some alternatives to Apache Kafka?<br />
+<a href="https://www.quora.com/What-are-some-alternatives-to-Apache-Kafka">https://www.quora.com/What-are-some-alternatives-to-Apache-Kafka</a>
+</li>
+
+<li>What is the best alternative to Kafka?<br />
+<a href="https://www.slant.co/options/961/alternatives/~kafka-alternatives">https://www.slant.co/options/961/alternatives/~kafka-alternatives</a>
+</li>
+
+<li>A super quick comparison between Kafka and Message Queues<br />
+<a href="https://hackernoon.com/a-super-quick-comparison-between-kafka-and-message-queues-e69742d855a8?gi=e965191e72d0">https://hackernoon.com/a-super-quick-comparison-between-kafka-and-message-queues-e69742d855a8?gi=e965191e72d0</a>
+</li>
+
+<li>Kafka Queuing: Kafka as a Messaging System<br />
+<a href="https://dzone.com/articles/kafka-queuing-kafka-as-a-messaging-system">https://dzone.com/articles/kafka-queuing-kafka-as-a-messaging-system</a>
+</li>
+
+</ol>
+
+
+
+<p></p><p></p>
+<p><small>Autor: <a href="http://www.fit.vutbr.cz/~tisnovpa">Pavel Tišnovský</a> &nbsp; 2021</small></p>
+</body>
+</html>
+
