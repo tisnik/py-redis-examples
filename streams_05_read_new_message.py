@@ -13,6 +13,8 @@
 #      Pavel Tisnovsky
 #
 
+"""Walrus library usage - wait for a new message to be appended."""
+
 from walrus import Database
 
 db = Database()
