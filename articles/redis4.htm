@@ -1,0 +1,1655 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Strict//EN"
+        "http://www.w3.org/TR/xhtml1/DTD/xhtml1-strict.dtd">
+<html>
+<head>
+<title>Proudy (streams) podporované systémem Redis (dokončení)</title>
+<meta name="Author" content="Pavel Tisnovsky" />
+<meta name="Generator" content="vim" />
+<meta http-equiv="content-type" content="text/html; charset=utf-8" />
+<style type="text/css">
+         body {color:#000000; background:#ffffff;}
+         h1  {font-family: arial, helvetica, sans-serif; color:#ffffff; background-color:#c00000; text-align:center; padding-left:1em}
+         h2  {font-family: arial, helvetica, sans-serif; color:#ffffff; background-color:#0000c0; padding-left:1em; text-align:left}
+         h3  {font-family: arial, helvetica, sans-serif; color:#000000; background-color:#c0c0c0; padding-left:1em; text-align:left}
+         h4  {font-family: arial, helvetica, sans-serif; color:#000000; background-color:#e0e0e0; padding-left:1em; text-align:left}
+         a   {font-family: arial, helvetica, sans-serif;}
+         li  {font-family: arial, helvetica, sans-serif; color:#000000; text-align:justify; width:450px;}
+         ol  {font-family: arial, helvetica, sans-serif; color:#000000; text-align:justify; width:450px;}
+         ul  {font-family: arial, helvetica, sans-serif; color:#000000; text-align:justify; width:450px;}
+         p   {font-family: arial, helvetica, sans-serif; color:#000000; text-align:justify;}
+         pre {background:#e0e0e0}
+</style>
+</head>
+
+<body>
+
+<h1>Proudy (streams) podporované systémem Redis (dokončení)</h1>
+
+<h3>Pavel Tišnovský</h3>
+
+<p></p>
+
+<h1>Úvodník</h1>
+
+<p>Na úvodní článek o proudech (streams) podporovaných v systému Redis 5 a 6 dnes navážeme popisem práce se skupinami konzumentů (consumer groups). V rámci skupiny konzumentů lze zprávy potvrzovat popř. zjišťovat, které zprávy sice byly přečteny, ovšem bez explicitního potvrzení.</p>
+
+
+
+<h2>Obsah</h2>
+
+<p><a href="#k01">1. Proudy (streams) podporované systémem Redis (dokončení)</a></p>
+<p><a href="#k02">2. Rychlost připojování zpráv na konec proudu</a></p>
+<p><a href="#k03">3. Rychlost čtení zpráv z&nbsp;proudu</a></p>
+<p><a href="#k04">4. Komunikační strategie podporované systémem Redis Streams</a></p>
+<p><a href="#k05">5. Jeden konzument zpracovávající zprávy z&nbsp;většího množství proudů</a></p>
+<p><a href="#k06">6. Fan-out: přečtení zprávy větším množstvím konzumentů</a></p>
+<p><a href="#k07">7. Deklarace skupiny konzumentů (Consumer Group)</a></p>
+<p><a href="#k08">8. Využití skupiny konzumentů pro čtení zpráv</a></p>
+<p><a href="#k09">9. Skupina konzumentů v&nbsp;Pythonu</a></p>
+<p><a href="#k10">10. Blokující čtení zpráv (čekání na nové zprávy)</a></p>
+<p><a href="#k11">11. Chování klauzule &gt; při čtení zpráv ve skupině konzumentů</a></p>
+<p><a href="#k12">12. Příkazy <strong>XACK</strong> a <strong>XPENDING</strong></a></p>
+<p><a href="#k13">13. Potvrzování zpráv příkazem <strong>XACK</strong></a></p>
+<p><a href="#k14">14. Příkaz <strong>XPENDING</strong></a></p>
+<p><a href="#k15">15. Potvrzování zpráv a příkaz <strong>XPENDING</strong> pro více skupin konzumentů</a></p>
+<p><a href="#k16">16. Mazání zpráv z&nbsp;proudu příkazem <strong>XDEL</strong></a></p>
+<p><a href="#k17">17. Seznam všech příkazů používaných pro práci s&nbsp;proudy</a></p>
+<p><a href="#k18">18. Repositář s&nbsp;demonstračními příklady</a></p>
+<p><a href="#k19">19. Předchozí články o systému Redis</a></p>
+<p><a href="#k20">20. Odkazy na Internetu</a></p>
+
+
+
+<p><a name="k01"></a></p>
+<h2 id="k01">1. Proudy (streams) podporované systémem Redis (dokončení)</h2>
+
+<p>Na <a
+href="https://www.root.cz/clanky/proudy-streams-podporovane-systemem-redis/">úvodní
+článek o proudech (streams) podporovaných v&nbsp;systému Redis verze 5 a 6</a>
+dnes navážeme. Popíšeme si zejména některé způsoby použití takzvaných skupin
+konzumentů (<i>consumer group</i>), které mohou mít v&nbsp;praktickém nasazení
+Redis Streams velký význam. Demonstrační příklady budou založeny jak na
+standardním nástroji <strong>redis-cli</strong>, tak i (i když dnes
+v&nbsp;poněkud menší míře v&nbsp;porovnání s&nbsp;článkem předchozím) na
+programovacím jazyku Python a knihovně <i>walrus</i>.</p>
+
+<p><div class="rs-tip-major">Poznámka: před zkoušením dále popsaných
+demonstračních příkladů je nutné, aby (lokálně) běžel samotný Redis,
+resp.&nbsp;přesněji řečeno jeho serverová část. Tu lze po instalaci Redisu 5
+nebo Redisu 6 spustit takto:</div></p>
+
+<pre>
+$ <strong>redis-server</strong>
+</pre>
+
+<p>Průběh spuštění i s&nbsp;informací, na kterém portu bude server naslouchat
+přicházejícím příkazům:</p>
+
+<pre>
+20676:C 21 Jan 2021 12:02:45.527 # oO0OoO0OoO0Oo Redis is starting oO0OoO0OoO0Oo
+20676:C 21 Jan 2021 12:02:45.527 # Redis version=6.0.10, bits=64, commit=00000000, modified=0, pid=20676, just started
+20676:C 21 Jan 2021 12:02:45.527 # Warning: no config file specified, using the default config. In order to specify a config file use redis-server /path/to/redis.conf
+20676:M 21 Jan 2021 12:02:45.528 * Increased maximum number of open files to 10032 (it was originally set to 1024).
+                _._
+           _.-``__ ''-._
+      _.-``    `.  `_.  ''-._           Redis 6.0.10 (00000000/0) 64 bit
+  .-`` .-```.  ```\/    _.,_ ''-._
+ (    '      ,       .-`  | `,    )     Running in standalone mode
+ |`-._`-...-` __...-.``-._|'` _.-'|     <strong>Port: 6379</strong>
+ |    `-._   `._    /     _.-'    |     PID: 20676
+  `-._    `-._  `-./  _.-'    _.-'
+ |`-._`-._    `-.__.-'    _.-'_.-'|
+ |    `-._`-._        _.-'_.-'    |           http://redis.io
+  `-._    `-._`-.__.-'_.-'    _.-'
+ |`-._`-._    `-.__.-'    _.-'_.-'|
+ |    `-._`-._        _.-'_.-'    |
+  `-._    `-._`-.__.-'_.-'    _.-'
+      `-._    `-.__.-'    _.-'
+          `-._        _.-'
+              `-.__.-'
+
+20676:M 21 Jan 2021 12:02:45.530 # <strong>Server initialized</strong>
+20676:M 21 Jan 2021 12:02:45.530 # WARNING overcommit_memory is set to 0! Background save may fail under low memory condition. To fix this issue add 'vm.overcommit_memory = 1' to /etc/sysctl.conf and then reboot or run the command 'sysctl vm.overcommit_memory=1' for this to take effect.
+20676:M 21 Jan 2021 12:02:45.530 * Loading RDB produced by version 6.0.10
+20676:M 21 Jan 2021 12:02:45.531 * RDB age 5938 seconds
+20676:M 21 Jan 2021 12:02:45.531 * RDB memory usage when created 0.84 Mb
+20676:M 21 Jan 2021 12:02:45.531 * DB loaded from disk: 0.000 seconds
+20676:M 21 Jan 2021 12:02:45.531 * <strong>Ready to accept connections</strong>
+</pre>
+
+
+
+<p><a name="k02"></a></p>
+<h2 id="k02">2. Rychlost připojování zpráv na konec proudu</h2>
+
+<p>Nejdříve si vyzkoušejme, jak rychlé může být připojování nových zpráv do
+proudu. Použijeme přitom <a href="https://www.root.cz/n/python/">programovací
+jazyk Python</a>, přesněji řečeno jeho de facto standardní variantu CPython a
+vyzkoušíme si, jak rychlý je zápis zpráv vykonaný metodou
+<strong>Stream.add</strong> z&nbsp;knihovny <a
+href="https://github.com/coleifer/walrus/">walrus</a>. Přitom musíme mít na
+paměti, že i když je samotný Redis velmi rychlým systémem (je naprogramován
+v&nbsp;C a může data udržovat přímo v&nbsp;operační paměti), interpret CPythonu
+naproti tomu patří mezi <a
+href="https://benchmarksgame-team.pages.debian.net/benchmarksgame/fastest/python3-java.html">nejpomalejší
+současně používané mainstreamové programovací jazyky</a>, takže čísla,
+k&nbsp;nimž dojdeme, mohou být při použití jiného jazyka mnohdy i mnohem
+vyšší:</p>
+
+<pre>
+import time
+&nbsp;
+from walrus import Database
+&nbsp;
+&nbsp;
+db = Database()
+stream = db.Stream("streamY")
+&nbsp;
+MESSAGES = 100000
+&nbsp;
+start = time.time()
+&nbsp;
+for i in range(0, MESSAGES):
+    message_id = <strong>stream.add({"id": i,</strong>
+                             <strong>"last": "y" if i == MESSAGES - 1 else "n"})</strong>
+&nbsp;
+end = time.time()
+print("Producent duration for {} messages: {} seconds".format(MESSAGES, (end - start)))
+</pre>
+
+<p><div class="rs-tip-major">Poznámka: atribut &bdquo;last&ldquo; je u poslední
+zprávy nastaven na &bdquo;y&ldquo;.</div></p>
+
+<p>Tento demonstrační příklad po svém spuštění do proudu nazvaného
+&bdquo;streamY&ldquo; připojí celkem 100000 zpráv a zjistí přitom celkovou dobu
+trvání těchto operací:</p>
+
+<pre>
+$ <strong>python 06_burst_message_writer.py </strong>
+&nbsp;
+Producent duration for 100000 messages: 8.259088277816772 seconds
+</pre>
+
+<p>Zápis všech 100000 zpráv trval přibližně osm sekund; naopak to tedy znamená,
+že je možné za jednu sekundu zapsat přibližně 12000 zpráv, což je na
+mikrobenchmark vytvořený v&nbsp;Pythonu poměrně slušné číslo.</p>
+
+<p><div class="rs-tip-major">Poznámka: samozřejmě je ještě vhodné otestovat
+dlouhodobou výkonnost a taktéž vliv delších zpráv na rychlost a propustnost
+producenta.</div></p>
+
+
+
+<p><a name="k03"></a></p>
+<h2 id="k03">3. Rychlost čtení zpráv z&nbsp;proudu</h2>
+
+<p>Čtení zpráv lze provádět rozličnými způsoby (ideálně s&nbsp;využitím skupin
+konzumentů, což je podrobněji popsáno v&nbsp;navazujících kapitolách). Naivní
+konzument zpráv, který sám zjišťuje ID právě přečtené zprávy, které posléze
+předává metodě <strong>read</strong> pro přečtení zprávy následující, může
+vypadat následovně:</p>
+
+<pre>
+import time
+&nbsp;
+from walrus import Database
+&nbsp;
+db = Database()
+stream = db.Stream("streamY")
+&nbsp;
+counter = 0
+&nbsp;
+start = time.time()
+&nbsp;
+last_id = "0"
+&nbsp;
+while True:
+    messages = <strong>stream.read(block=0, last_id=last_id, count=1)</strong>
+    message = messages[0]
+    last_id = message[0]
+    content = message[1]
+    counter += 1
+    if b"last" in content and content[b"last"] == b"y":
+        break
+&nbsp;
+end = time.time()
+print("Consumer duration for {} messages: {} seconds".format(counter, (end - start)))
+</pre>
+
+<p><div class="rs-tip-major">Poznámka: povšimněte si, jak na základě obsahu
+zprávy zjišťujeme, zda se má konzument ukončit či zda má přečíst následující
+zprávu. Tento test je založen na atributu &bdquo;last&ldquo;, jehož jméno i
+obsah jsou typu <i>byte array</i> (a nikoli běžný řetězec!).</div></p>
+
+<p>Konzumenta spustíme s&nbsp;tím, že by měl přečíst zprávy vytvořené
+v&nbsp;rámci <a href="#k02">předchozí kapitoly</a>, tedy celkem 100000
+zpráv:</p>
+
+<pre>
+$ <strong>python 07_message_consumer.py </strong>
+&nbsp;
+Consumer duration for 100000 messages: 12.752091884613037 seconds
+</pre>
+
+<p>Vidíme, že čtení zpráv je v&nbsp;tomto případě pomalejší než zápis, ale to
+jen z&nbsp;toho důvodu, že se zprávy čtou po jedné a z&nbsp;předchozího článku
+již víme, že vyhledání zprávy pro zadané ID (tedy operace <i>seek</i>) má
+složitost <i>O(log(N))</i> a nikoli konstantní složitost. Čtení lze ovšem
+provést i blokově:</p>
+
+<pre>
+import time
+&nbsp;
+from walrus import Database
+&nbsp;
+db = Database()
+stream = db.Stream("streamY")
+&nbsp;
+start = time.time()
+&nbsp;
+messages = <strong>stream.read(last_id=0, count=100000)</strong>
+counter = len(messages)
+&nbsp;
+end = time.time()
+print("Consumer duration for {} messages: {} seconds".format(counter, (end - start)))
+</pre>
+
+<p>Tato operace je již v&nbsp;porovnání s&nbsp;předchozím příkladem mnohem
+rychlejší, celkem lze takto přečíst přibližně 46000 zpráv za sekundu:</p>
+
+<pre>
+$ <strong>python 08_message_consumer.py </strong>
+&nbsp;
+Consumer duration for 100000 messages: 2.1339304447174072 seconds
+</pre>
+
+
+
+<p><a name="k04"></a></p>
+<h2 id="k04">4. Komunikační strategie podporované systémem Redis Streams</h2>
+
+<p>V&nbsp;navazujícím textu si popíšeme některé pokročilejší operace
+s&nbsp;proudy zpráv. Tyto operace se někdy nazývají (v&nbsp;tomto případě ovšem
+nepřesně) <i>komunikační strategie</i>, což je název převzatý z&nbsp;oblasti
+klasických message brokerů:</p>
+
+<ol>
+<li>Využití jediného konzumenta, který zpracovává (konzumuje) zprávy z&nbsp;většího množství proudů.</li>
+<li>Konzumace stejné zprávy (ze shodného proudu či proudů) větším množstvím konzumentů.</li>
+<li>Čtení zpráv v&nbsp;rámci skupiny konzumentů.</li>
+<li>Kombinace předchozích dvou možností.</li>
+<li>Potvrzování zpráv v&nbsp;rámci skupiny konzumentů.</li>
+<li>Mazání vybraných zpráv z&nbsp;proudu.</li>
+</ol>
+
+
+
+<p><a name="k05"></a></p>
+<h2 id="k05">5. Jeden konzument zpracovávající zprávy z&nbsp;většího množství proudů</h2>
+
+<p>Systém Redis umožňuje, aby jeden konzument četl (jinými slovy konzumoval)
+zprávy z&nbsp;většího množství proudů, což je téma, s&nbsp;nímž jsme se ve
+stručnosti seznámili minule. Můžeme si to snadno vyzkoušet pokusem o přečtení
+zprávy z&nbsp;proudu nazvaného &bdquo;streamA&ldquo; nebo &bdquo;streamB&ldquo;
+&ndash; přečte se jediná zpráva systémem &bdquo;kdo dřív přijde, ten dřív
+mele&ldquo; (dopředu tedy nelze říct, ze kterého proudu bude čtení zprávy
+provedeno). U obou proudů specifikujeme speciální ID $, které značí, že se má
+přečíst <i>nová</i> (ještě neexistující) zpráva; čtení je navíc blokující
+(s&nbsp;čekáním):</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>xread BLOCK 0 streams streamA streamB $ $</strong>
+</pre>
+
+<p>V&nbsp;novém terminálu nyní připojíme zprávu na konec proudu nazvaného
+&bdquo;streamA&ldquo;:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>xadd streamA * description messageA1</strong>
+&nbsp;
+"1611339744871-0"
+</pre>
+
+<p>V&nbsp;prvním terminálu uvidíme, že zpráva byla skutečně ihned přečtena a
+poté se příkaz <strong>read</strong> ukončí:</p>
+
+<pre>
+1) 1) "streamA"
+   2) 1) 1) "1611339744871-0"
+         2) 1) "description"
+            2) "messageA1"
+(61.71s)
+</pre>
+
+<p>Nové spuštění konzumenta, opět pro dvojici proudů &bdquo;streamA&ldquo; a
+&bdquo;streamB&ldquo;:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>xread BLOCK 0 streams streamA streamB $ $</strong>
+</pre>
+
+<p>Nyní připojíme zprávu do druhého proudu pojmenovaného
+&bdquo;streamB&ldquo;:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>xadd streamB * description messageB1</strong>
+&nbsp;
+"1611339766311-0"
+</pre>
+
+<p>Zpráva je konzumentem ihned přečtena a opět dojde k&nbsp;ukončení příkazu
+<strong>read</strong>:</p>
+
+<pre>
+1) 1) "streamB"
+   2) 1) 1) "1611339766311-0"
+         2) 1) "description"
+            2) "messageB1"
+(8.77s)
+</pre>
+
+<p><div class="rs-tip-major">Poznámka: pokud budete vyžadovat přečtení většího
+množství zpráv, postačuje použít nepovinný parametr
+<strong>count</strong>.</div></p>
+
+
+
+<p><a name="k06"></a></p>
+<h2 id="k06">6. Fan-out: přečtení zprávy větším množstvím konzumentů</h2>
+
+<p>Další možností nabízenou systémem Redis je přečtení zprávy větším množstvím
+konzumentů, což je operace, která se v&nbsp;oblasti message brokerů většinou
+označuje termínem <i>fan-out</i>. Nezáleží přitom na počtu konzumentů ani na
+tom, kdy si konzument zprávu či zprávy vyžádá (většinou je ovšem připojen
+v&nbsp;reálném čase a čeká na nové zprávy). Tuto možnost si můžeme velmi snadno
+otestovat.</p>
+
+<p>Nejprve spustíme prvního konzumenta, a to v&nbsp;režimu blokujícího čtení
+(čekání na novou zprávu):</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>xread BLOCK 0 streams stream3 $</strong>
+</pre>
+
+<p>V&nbsp;dalším terminálu spustíme druhého konzumenta, a to v&nbsp;naprosto
+stejném režimu:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>xread BLOCK 0 streams stream3 $</strong>
+</pre>
+
+<p>Nyní (v&nbsp;pořadí již třetím terminálu) pošleme zprávu do proudu nazvaného
+&bdquo;stream3&ldquo;, tedy do stejného proudu, jaký je používán oběma
+konzumenty:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>xadd stream3 * foo bar</strong>
+&nbsp;
+"1611586562835-0"
+</pre>
+
+<p>V&nbsp;příslušných terminálech bychom nyní měli vidět, že oba konzumenti
+získali stejnou zprávu.</p>
+
+<p>Terminál prvního konzumenta:</p>
+
+<pre>
+1) 1) "stream3"
+   2) 1) 1) "1611586562835-0"
+         2) 1) "foo"
+            2) "bar"
+(39.25s)
+</pre>
+
+<p>Terminál druhého konzumenta:</p>
+
+<pre>
+1) 1) "stream3"
+   2) 1) 1) "1611586562835-0"
+         2) 1) "foo"
+            2) "bar"
+(34.69s)
+</pre>
+
+<p><div class="rs-tip-major">Poznámka: přijetí zprávy se v&nbsp;tomto případě
+žádným způsobem nepotvrzuje &ndash; každý konzument má naprostou volnost
+v&nbsp;určení, kterou zprávu či které zprávy potřebuje přečíst.</div></p>
+
+
+
+<p><a name="k07"></a></p>
+<h2 id="k07">7. Deklarace skupiny konzumentů (Consumer Group)</h2>
+
+<p><a href="#k01">V&nbsp;úvodní kapitole</a> jsme si řekli, že konzumenti zpráv
+se mohou sdružovat do skupin konzumentů neboli <i>consumer group(s)</i>, což je
+termín převzatý ze systému Apache Kafka. Pro danou skupinu konzumentů existují
+nové příkazy i nové možnosti, například možnost potvrzování zpráv atd. Nová
+skupina konzumentů se vytváří příkazem <strong>xgroup</strong>:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>help xgroup</strong>
+&nbsp;
+  XGROUP [CREATE key groupname id-or-$] [SETID key groupname id-or-$] [DESTROY key groupname] [DELCONSUMER key groupname consumername]
+  summary: Create, destroy, and manage consumer groups.
+  since: 5.0.0
+  group: stream
+</pre>
+
+<p>Následuje příklad vytvoření skupiny pro proud nazvaný &bdquo;streamC&ldquo;.
+Ten by měl existovat, takže v&nbsp;něm nejdříve vytvoříme nějakou zprávu:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>xadd streamC * description messageB1</strong>
+&nbsp;
+"1611340061876-0"
+</pre>
+
+<p>Nyní již můžeme vytvořit novou skupinu a pojmenovat ji &bdquo;groupC&ldquo;
+(nebo libovolně jinak). Navíc určíme, jaká zpráva z&nbsp;proudu
+&bdquo;streamC&ldquo; se má považovat za &bdquo;poslední doručenou
+zprávu&ldquo;. Můžeme zde použít ID zprávy nebo i metaznak $:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>XGROUP CREATE streamC groupC $</strong>
+&nbsp;
+OK
+</pre>
+
+<p>Alternativně lze vytvořit skupinu i pro neexistující proud, a to
+následovně:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>XGROUP CREATE streamD groupD $ MKSTREAM</strong>
+&nbsp;
+OK
+</pre>
+
+<p>Čtení zpráv v&nbsp;rámci skupiny konzumentů zajišťuje nový příkaz
+<strong>XREADGROUP</strong> (tedy nikoli <strong>XREAD</strong>):</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>help xreadgroup</strong>
+&nbsp;
+  XREADGROUP GROUP group consumer [COUNT count] [BLOCK milliseconds] [NOACK] STREAMS key [key ...] ID [ID ...]
+  summary: Return new entries from a stream using a consumer group, or access the history of the pending entries for a given consumer. Can block.
+  since: 5.0.0
+  group: stream
+</pre>
+
+<p>Praktickou ukázku si uvedeme v&nbsp;navazující kapitole.</p>
+
+
+
+<p><a name="k08"></a></p>
+<h2 id="k08">8. Využití skupiny konzumentů pro čtení zpráv</h2>
+
+<p>Podívejme se nyní na způsob využití skupiny konzumentů pro čtení zpráv
+z&nbsp;vybraných proudů. Připomeňme si, že běžné přečtení zprávy z&nbsp;proudu
+(bez ohledu na skupiny) se provádí příkazem <strong>XREAD</strong>:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>xread streams streamX 0</strong>
+1) 1) "streamX"
+   2) 1) 1) "1611340576679-0"
+         2) 1) "foo"
+            2) "10"
+            3) "bar"
+            4) "20"
+</pre>
+
+<p>V&nbsp;případě použití <i>consumer group</i> se namísto příkazu
+<strong>XREAD</strong> používá příkaz <strong>XREADGROUP</strong>, který má
+navíc poněkud odlišné parametry. Specifikovat je nutné jméno skupiny, jméno
+konzumenta (to může být libovolný řetězec), seznam proudů (typicky jediného
+proudu) pro čtení a taktéž ID zprávy. Namísto tohoto ID lze použít speciální
+znak &lt;, který naznačuje, že ID zprávy se má získat z&nbsp;interní datové
+struktury vytvořené pro danou skupiny (je tedy podobné konceptu <i>offsetů</i>
+ze systému Apache Kafka, které jsou taktéž pro skupinu ukládány):</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>XREADGROUP BLOCK 0 GROUP groupC consumer1 STREAMS streamC &lt;</strong>
+</pre>
+
+<p>Čtení můžeme spustit i pro dalšího konzumenta ze stejné skupiny:</p>
+
+<pre>
+128.0.0.1:6379&gt; <strong>XREADGROUP BLOCK 0 GROUP groupC consumer2 STREAMS streamC &lt;</strong>
+</pre>
+
+<p>Pokud nyní do proudu nazvaného &bdquo;streamC&ldquo; přidáme dvě zprávy,
+budou přečteny prvním či druhým konzumentem:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>xadd streamC * description message1</strong>
+"1611340273067-0"
+&nbsp;
+127.0.0.1:6379&gt; <strong>xadd streamC * description message2</strong>
+"1611340275822-0"
+</pre>
+
+<p>Výsledek (zpráva) vypsaná prvním konzumentem:</p>
+
+<pre>
+1) 1) "streamC"
+   2) 1) 1) "1611340273067-0"
+         2) 1) "description"
+            2) "message1"
+(30.36s)
+</pre>
+
+<p>Výsledek (zpráva) vypsaná konzumentem druhým:</p>
+
+<pre>
+1) 1) "streamC"
+   2) 1) 1) "1611340275822-0"
+         2) 1) "description"
+            2) "message2"
+(14.38s)
+</pre>
+
+
+
+<p><a name="k09"></a></p>
+<h2 id="k09">9. Skupina konzumentů v&nbsp;Pythonu</h2>
+
+<p>Podobně jako tomu bylo v&nbsp;předchozím článku si i dnes ukažme, jakým
+způsobem je možné vytvořit konzumenta zpráv aktivního v&nbsp;rámci nějaké
+skupiny konzumentů. Opět použijeme knihovnu <i>walrus</i>. Nejprve
+zkonstruujeme objekt představující skupinu konzumentů. Povšimněte si, že při
+konstrukci lze specifikovat seznam (či n-tici) s&nbsp;názvy proudů &ndash;
+skupina konzumentů tedy může číst data z&nbsp;většího množství proudů:</p>
+
+<pre>
+cg = <strong>db.consumer_group("a-group", ["streamX"])</strong>
+</pre>
+
+<p>Dále skupinu vytvoříme (pokud ještě neexistuje):</p>
+
+<pre>
+cg.create()
+</pre>
+
+<p>Ve třetím kroku je nutné specifikovat, která zpráva bude pro skupinu
+konzumentů považována ve výchozím stavu za přečtenou. Pokud uvedeme $, znamená
+to, že skupina konzumentů bude čekat a konzumovat pouze nové zprávy, nezávisle
+na tom, jestli již nějaké zprávy v&nbsp;proudu existují:</p>
+
+<pre>
+cg.set_id('$')
+</pre>
+
+<p><div class="rs-tip-major">Poznámka: ID této zprávy se uloží do interní
+struktury udržující informace o stavu skupiny konzumentů.</div></p>
+
+<p>Dále je již možné zprávy číst a nějakým způsobem zpracovávat:</p>
+
+<pre>
+while True:
+    messages = <strong>cg.read(block=0, count=1)</strong>
+    print(messages[0])
+</pre>
+
+<p>Následuje úplný zdrojový kód tohoto příkladu:</p>
+
+<pre>
+from walrus import Database
+&nbsp;
+db = Database()
+&nbsp;
+cg = <strong>db.consumer_group("a-group", ["streamX"])</strong>
+cg.create()
+cg.set_id('$')
+&nbsp;
+while True:
+    messages = <strong>cg.read(block=0, count=1)</strong>
+    print(messages[0])
+</pre>
+
+<p>Nyní spustíme dva konzumenty, každý v&nbsp;samostatném terminálu:</p>
+
+<pre>
+$ <strong>python streams_09_read_new_messages_group.py</strong>
+</pre>
+
+<pre>
+$ <strong>python streams_09_read_new_messages_group.py</strong>
+</pre>
+
+<p>Ve třetím terminálu spustíme producenta zpráv:</p>
+
+<pre>
+$ <strong>python 03_add_messages.py</strong>
+&nbsp;
+b'1611587949338-0'
+b'1611587949339-0'
+b'1611587949339-1'
+b'1611587949340-0'
+b'1611587949340-1'
+b'1611587949340-2'
+b'1611587949341-0'
+b'1611587949341-1'
+b'1611587949341-2'
+b'1611587949342-0'
+</pre>
+
+<p>První konzument může zpracovat liché zprávy:</p>
+
+<pre>
+[b'streamX', [(b'1611587949338-0', {b'foo': b'1', b'bar': b'0'})]]
+[b'streamX', [(b'1611587949339-1', {b'foo': b'3', b'bar': b'4'})]]
+[b'streamX', [(b'1611587949340-1', {b'foo': b'5', b'bar': b'8'})]]
+[b'streamX', [(b'1611587949341-0', {b'foo': b'7', b'bar': b'12'})]]
+[b'streamX', [(b'1611587949341-2', {b'foo': b'9', b'bar': b'16'})]]
+</pre>
+
+<p>A druhý zprávy sudé:</p>
+
+<pre>
+[b'streamX', [(b'1611587949339-0', {b'foo': b'2', b'bar': b'2'})]]
+[b'streamX', [(b'1611587949340-0', {b'foo': b'4', b'bar': b'6'})]]
+[b'streamX', [(b'1611587949340-2', {b'foo': b'6', b'bar': b'10'})]]
+[b'streamX', [(b'1611587949341-1', {b'foo': b'8', b'bar': b'14'})]]
+[b'streamX', [(b'1611587949342-0', {b'foo': b'10', b'bar': b'18'})]]
+</pre>
+
+<p><div class="rs-tip-major">Poznámka: ve skutečnosti je náhoda, že se zprávy
+rozdělily mezi oba konzumenty takto spravedlivě. Při dalším spuštění můžeme
+dostat odlišné výsledky, ovšem obecná zásada rozdělování zpráv mezi konzumenty
+(<i>round-robin</i>) bude zachována.</div></p>
+
+
+
+<p><a name="k10"></a></p>
+<h2 id="k10">10. Blokující čtení zpráv (čekání na nové zprávy) v&nbsp;Pythonu</h2>
+
+<p>V&nbsp;předchozím demonstračním příkladu jsme zprávy četli po jedné, tedy
+s&nbsp;využitím následující nekonečné smyčky:</p>
+
+<pre>
+while True:
+    messages = <strong>cg.read(block=0, count=1)</strong>
+    print(messages[0])
+</pre>
+
+<p>Ovšem zajímavější a rychlejší je neomezit se pouze na čtení jediné zprávy a
+provést čtení n-zpráv, které byly do proudu přidány od předchozího čtení (víme
+již, že ID naposledy přečtené zprávy je uloženo v&nbsp;samotném Redisu). To
+v&nbsp;důsledku vede k&nbsp;dvojici vnořených programových smyček:</p>
+
+<pre>
+while True:
+    messages = <strong>cg.read(block=0)</strong>
+    for message in messages:
+        print(message)
+</pre>
+
+<p>Úplný zdrojový kód konzumenta zpráv patřící do skupiny &bdquo;a-group&ldquo;
+může ve své vylepšené podobě vypadat následovně:</p>
+
+<pre>
+from walrus import Database
+&nbsp;
+db = Database()
+&nbsp;
+cg = <strong>db.consumer_group("a-group", ["streamX"])</strong>
+cg.create()
+cg.set_id('$')
+&nbsp;
+while True:
+    messages = <strong>cg.read(block=0)</strong>
+    for message in messages:
+        print(message)
+</pre>
+
+
+
+<p><a name="k11"></a></p>
+<h2 id="k11">11. Chování klauzule &gt; při čtení zpráv ve skupině konzumentů</h2>
+
+<p>Vraťme se ještě ke klauzuli &gt; (specifikace zprávy čtené ve skupině
+konzumentů). Jedná se o náhradu konkrétního ID zprávy za ID automaticky uložené
+v&nbsp;Redisu pro zvolenou skupinu konzumentů.</p>
+
+<p>Připravíme si nový proud &bdquo;streamZ&ldquo; i skupinu
+&bdquo;groupZ&ldquo; postupem, který již dobře známe:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>XADD streamZ * foo 42</strong>
+"1611601803117-0"
+&nbsp;
+127.0.0.1:6379&gt; <strong>XGROUP CREATE streamZ groupZ $</strong>
+OK
+</pre>
+
+<p>Dále do proudu pojmenovaného &bdquo;streamZ&ldquo; vložíme šestici
+zpráv:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>XADD streamZ * m 1</strong>
+"1611602123499-0"
+&nbsp;
+127.0.0.1:6379&gt; <strong>XADD streamZ * m 2</strong>
+"1611602124883-0"
+&nbsp;
+127.0.0.1:6379&gt; <strong>XADD streamZ * m 3</strong>
+"1611602125635-0"
+&nbsp;
+127.0.0.1:6379&gt; <strong>XADD streamZ * m 4</strong>
+"1611602126323-0"
+&nbsp;
+127.0.0.1:6379&gt; <strong>XADD streamZ * m 5</strong>
+"1611602127019-0"
+&nbsp;
+127.0.0.1:6379&gt; <strong>XADD streamZ * m 6</strong>
+"1611602127955-0"
+</pre>
+
+<p>První pokus o přečtení zprávy ve skupině &bdquo;groupZ&ldquo; vrátí první
+zprávu (používáme již klauzuli &gt;):</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>XREADGROUP GROUP groupZ consumer1 COUNT 1 STREAMS streamZ &gt;</strong>
+1) 1) "streamZ"
+   2) 1) 1) "1611602123499-0"
+         2) 1) "m"
+            2) "1"
+</pre>
+
+<p>Zcela totožný příkaz zavolaný o chvíli později přečte druhou zprávu, protože
+se ID naposledy přečtené zprávy automaticky zapamatovalo:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>XREADGROUP GROUP groupZ consumer1 COUNT 1 STREAMS streamZ &gt;</strong>
+1) 1) "streamZ"
+   2) 1) 1) "1611602124883-0"
+         2) 1) "m"
+            2) "2"
+</pre>
+
+<p>Přečtení zbylých čtyř zpráv:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>XREADGROUP GROUP groupZ consumer1 STREAMS streamZ &gt;</strong>
+1) 1) "streamZ"
+   2) 1) 1) "1611602125635-0"
+         2) 1) "m"
+            2) "3"
+      2) 1) "1611602126323-0"
+         2) 1) "m"
+            2) "4"
+      3) 1) "1611602127019-0"
+         2) 1) "m"
+            2) "5"
+      4) 1) "1611602127955-0"
+         2) 1) "m"
+            2) "6"
+</pre>
+
+<p>Pokus o další čtení již nevrátí žádné zprávy:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>XREADGROUP GROUP groupZ consumer1 STREAMS streamZ &gt;</strong>
+(nil)
+</pre>
+
+<p>A to ani když změníme jméno konzumenta:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>XREADGROUP GROUP groupZ consumer2 STREAMS streamZ &gt;</strong>
+(nil)
+</pre>
+
+<p>Nic nám však nebrání kdykoli provést &bdquo;přetočení&ldquo; na libovolnou
+zprávu s&nbsp;ID (zde na první zprávu v&nbsp;proudu):</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>XREADGROUP GROUP groupZ consumer1 STREAMS streamZ 0</strong>
+1) 1) "streamZ"
+   2) 1) 1) "1611602123499-0"
+         2) 1) "m"
+            2) "1"
+      2) 1) "1611602124883-0"
+         2) 1) "m"
+            2) "2"
+      3) 1) "1611602125635-0"
+         2) 1) "m"
+            2) "3"
+      4) 1) "1611602126323-0"
+         2) 1) "m"
+            2) "4"
+      5) 1) "1611602127019-0"
+         2) 1) "m"
+            2) "5"
+      6) 1) "1611602127955-0"
+         2) 1) "m"
+            2) "6"
+</pre>
+
+<p>Jakmile byly zprávy přečteny jedním konzumentem, druhý konzument ve stejné
+skupině je nezíská:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>XREADGROUP GROUP groupZ consumer2 STREAMS streamZ 0</strong>
+1) 1) "streamZ"
+   2) (empty array)
+</pre>
+
+
+
+<p><a name="k12"></a></p>
+<h2 id="k12">12. Příkazy <strong>XACK</strong> a <strong>XPENDING</strong></h2>
+
+<p>V&nbsp;případě, že jsou zprávy pouze přečteny příkazem
+<strong>XREADGROUP</strong>, nachází se ve stavu &bdquo;pending&ldquo;. Jedná
+se o zprávy již poslané nějakému konzumentu, který však jejich zpracování
+nepotvrdil. Pro potvrzování zpráv se používá příkaz <strong>XACK</strong>:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>help xack</strong>
+&nbsp;
+  XACK key group ID [ID ...]
+  summary: Marks a pending message as correctly processed, effectively removing it from the pending entries list of the consumer group. Return value of the command is the number of messages successfully acknowledged, that is, the IDs we were actually able to resolve in the PEL.
+  since: 5.0.0
+  group: stream
+</pre>
+
+<p>Pro zjištění stavu potvrzení zpráv se používá příkaz <strong>XPENDING</strong>:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>help xpending</strong>
+&nbsp;
+  XPENDING key group [start end count] [consumer]
+  summary: Return information and entries from a stream consumer group pending entries list, that are messages fetched but never acknowledged.
+  since: 5.0.0
+  group: stream
+</pre>
+
+<p>Příklady použití těchto dvou příkazů si ukážeme v&nbsp;navazujících dvou
+kapitolách.</p>
+
+
+
+<p><a name="k13"></a></p>
+<h2 id="k13">13. Potvrzování zpráv příkazem <strong>XACK</strong></h2>
+
+<p>Ukažme si nejdříve příklad použití příkazu <strong>XACK</strong> pro
+potvrzování zpracování zpráv. Pro tento účel vytvoříme další proud
+&bdquo;streamW&ldquo; a skupinu &bdquo;groupW&ldquo;:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>XGROUP CREATE streamW groupW $ MKSTREAM</strong>
+OK
+</pre>
+
+<p>Do proudu přidáme šestici zpráv:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>XADD streamW * w 0</strong>
+"1611603108014-0"
+&nbsp;
+127.0.0.1:6379&gt; <strong>XADD streamW * w 1</strong>
+"1611603110062-0"
+&nbsp;
+127.0.0.1:6379&gt; <strong>XADD streamW * w 2</strong>
+"1611603111094-0"
+&nbsp;
+127.0.0.1:6379&gt; <strong>XADD streamW * w 3</strong>
+"1611603112133-0"
+&nbsp;
+127.0.0.1:6379&gt; <strong>XADD streamW * w 4</strong>
+"1611603113032-0"
+&nbsp;
+127.0.0.1:6379&gt; <strong>XADD streamW * w 5</strong>
+"1611603113901-0"
+</pre>
+
+<p>Zprávy pochopitelně můžeme přečíst, prozatím bez potvrzení:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>XREADGROUP GROUP groupW c1 STREAMS streamW 0</strong>
+1) 1) "streamW"
+   2) 1) 1) "1611603108014-0"
+         2) 1) "w"
+            2) "0"
+      2) 1) "1611603110062-0"
+         2) 1) "w"
+            2) "1"
+      3) 1) "1611603111094-0"
+         2) 1) "w"
+            2) "2"
+      4) 1) "1611603112133-0"
+         2) 1) "w"
+            2) "3"
+      5) 1) "1611603113032-0"
+         2) 1) "w"
+            2) "4"
+      6) 1) "1611603113901-0"
+         2) 1) "w"
+            2) "5"
+</pre>
+
+<p>Druhé čtení vrátí ty samé zprávy, tedy původní šestici:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>XREADGROUP GROUP groupW c1 STREAMS streamW 0</strong>
+1) 1) "streamW"
+   2) 1) 1) "1611603108014-0"
+         2) 1) "w"
+            2) "0"
+      2) 1) "1611603110062-0"
+         2) 1) "w"
+            2) "1"
+      3) 1) "1611603111094-0"
+         2) 1) "w"
+            2) "2"
+      4) 1) "1611603112133-0"
+         2) 1) "w"
+            2) "3"
+      5) 1) "1611603113032-0"
+         2) 1) "w"
+            2) "4"
+      6) 1) "1611603113901-0"
+         2) 1) "w"
+            2) "5"
+</pre>
+
+<p>Potvrdíme zpracování první zprávy, a to uvedením proudu, skupiny i ID
+zprávy:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>XACK streamW groupW 1611603108014-0</strong>
+(integer) 1
+</pre>
+
+<p>Nyní pokus o přečtení <i>všech</i> zpráv vrátí pouze pětici zpráv a nikoli
+šestici (první zpráva byla potvrzena a pro skupinu zapomenuta):</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>XREADGROUP GROUP groupW c1 STREAMS streamW 0</strong>
+1) 1) "streamW"
+   2) 1) 1) "1611603110062-0"
+         2) 1) "w"
+            2) "1"
+      2) 1) "1611603111094-0"
+         2) 1) "w"
+            2) "2"
+      3) 1) "1611603112133-0"
+         2) 1) "w"
+            2) "3"
+      4) 1) "1611603113032-0"
+         2) 1) "w"
+            2) "4"
+      5) 1) "1611603113901-0"
+         2) 1) "w"
+            2) "5"
+</pre>
+
+<p>Potvrzení dalších zpráv (zde konkrétně čtvrté):</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>XACK streamW groupW 1611603113032-0</strong>
+(integer) 1
+</pre>
+
+<p>Zpětné potvrzení dřívější zprávy lze provést:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>XACK streamW groupW 1611603110062-0</strong>
+(integer) 1
+</pre>
+
+<p>Potvrzeny byly tři zprávy ze šesti, takže by nás výsledek dalšího čtení již
+neměl překvapit:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>XREADGROUP GROUP groupW c1 STREAMS streamW 0</strong>
+1) 1) "streamW"
+   2) 1) 1) "1611603111094-0"
+         2) 1) "w"
+            2) "2"
+      2) 1) "1611603112133-0"
+         2) 1) "w"
+            2) "3"
+      3) 1) "1611603113901-0"
+         2) 1) "w"
+            2) "5"
+</pre>
+
+
+
+<p><a name="k14"></a></p>
+<h2 id="k14">14. Příkaz <strong>XPENDING</strong></h2>
+
+<p>Příkaz <strong>XPENDING</strong> vrátí pro danou skupinu a proud informaci o tom, jaké zprávy nebyly schváleny:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>XPENDING streamC groupC</strong>
+1) (integer) 2
+2) "1611340273067-0"
+3) "1611340275822-0"
+4) 1) 1) "consumer1"
+      2) "2"
+</pre>
+
+<p>V&nbsp;našem konkrétním případě nebyly schváleny dvě přečtené zprávy. Navíc
+se vrátila dvojice ID (nejmenší a největší) neschválených zpráv a dále počet
+neschválených zpráv pro každého konzumenta (zde je pouze jediný konzument).</p>
+
+<p>Totéž můžeme provést pro proud &bdquo;streamW&ldquo; a skupinu
+&bdquo;groupW&ldquo; vytvořené v&nbsp;rámci předchozí kapitoly:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>XPENDING streamW groupW</strong>
+1) (integer) 3
+2) "1611603111094-0"
+3) "1611603113901-0"
+4) 1) 1) "c1"
+      2) "3"
+</pre>
+
+<p>Zkusíme nyní zprávy přečíst (a neschválit), ale odlišným konzumentem:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>XREADGROUP GROUP groupW c2 STREAMS streamW &gt;</strong>
+1) 1) "streamW"
+   2) 1) 1) "1611603448428-0"
+         2) 1) "w"
+            2) "6"
+      2) 1) "1611603449340-0"
+         2) 1) "w"
+            2) "7"
+      3) 1) "1611603450140-0"
+         2) 1) "w"
+            2) "8"
+</pre>
+
+<p>Nyní bude výsledek příkazu <strong>XPENDING</strong> odlišný, protože se
+v&nbsp;posledním prvku pole vrátí informace o dvou konzumentech:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>XPENDING streamW groupW</strong>
+1) (integer) 6
+2) "1611603111094-0"
+3) "1611603450140-0"
+4) 1) 1) "c1"
+      2) "3"
+   2) 1) "c2"
+      2) "3"
+</pre>
+
+
+
+<p><a name="k15"></a></p>
+<h2 id="k15">15. Potvrzování zpráv a příkaz <strong>XPENDING</strong> pro více skupin konzumentů</h2>
+
+<p>Kombinace potvrzování zpráv a příkazu <strong>XPENDING</strong> tvoří
+společně se skupinami konzumentů nejdůležitější část práce s&nbsp;proudy
+v&nbsp;praxi, takže se podívejme ještě na jeden příklad, který je nepatrně
+komplikovanější, než příklady předchozí.</p>
+
+<p>Vytvoříme dvě skupiny konzumentů, ovšem nad stejným (novým) proudem nazvaným
+&bdquo;streamQ&ldquo;:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>XGROUP CREATE streamQ group1 $ MKSTREAM</strong>
+OK
+&nbsp;
+127.0.0.1:6379&gt; <strong>XGROUP CREATE streamQ group2 $ MKSTREAM</strong>
+OK
+</pre>
+
+<p>Do proudu sdíleného oběma skupinami přidáme pětici zpráv:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>xadd streamQ * m 1</strong>
+"1611603635755-0"
+&nbsp;
+127.0.0.1:6379&gt; <strong>xadd streamQ * m 2</strong>
+"1611603636610-0"
+&nbsp;
+127.0.0.1:6379&gt; <strong>xadd streamQ * m 3</strong>
+"1611603637331-0"
+&nbsp;
+127.0.0.1:6379&gt; <strong>xadd streamQ * m 4</strong>
+"1611603638563-0"
+&nbsp;
+127.0.0.1:6379&gt; <strong>xadd streamQ * m 5</strong>
+"1611603639379-0"
+</pre>
+
+<p>Informace o nepotvrzených zprávách musí být pro obě skupiny stejné &ndash;
+žádná taková zpráva neexistuje:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>XPENDING streamQ group1</strong>
+1) (integer) 0
+2) (nil)
+3) (nil)
+4) (nil)
+</pre>
+
+<p>a:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>XPENDING streamQ group2</strong>
+1) (integer) 0
+2) (nil)
+3) (nil)
+4) (nil)
+</pre>
+
+<p>Přečtení všech zpráv v&nbsp;rámci první skupiny konzumentů:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>xreadgroup group group1 c1 streams streamQ &gt;</strong>
+1) 1) "streamQ"
+   2) 1) 1) "1611603635755-0"
+         2) 1) "m"
+            2) "1"
+      2) 1) "1611603636610-0"
+         2) 1) "m"
+            2) "2"
+      3) 1) "1611603637331-0"
+         2) 1) "m"
+            2) "3"
+      4) 1) "1611603638563-0"
+         2) 1) "m"
+            2) "4"
+      5) 1) "1611603639379-0"
+         2) 1) "m"
+            2) "5"
+</pre>
+
+<p>Všech pět zpráv je nepotvrzených:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>XPENDING streamQ group1</strong>
+1) (integer) 5
+2) "1611603635755-0"
+3) "1611603639379-0"
+4) 1) 1) "c1"
+      2) "5"
+</pre>
+
+<p>Přečtení jedné zprávy v&nbsp;rámci druhé skupiny konzumentů:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>xreadgroup group group2 c2 count 1 streams streamQ &gt;</strong>
+1) 1) "streamQ"
+   2) 1) 1) "1611603635755-0"
+         2) 1) "m"
+            2) "1"
+</pre>
+
+<p>Pro tuto skupinu nyní existuje jen jedna nepotvrzená zpráva:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>XPENDING streamQ group2</strong>
+1) (integer) 1
+2) "1611603635755-0"
+3) "1611603635755-0"
+4) 1) 1) "c2"
+      2) "1"
+</pre>
+
+<p>Potvrzení zprávy ve druhé skupině:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>xack streamQ group2 1611603635755-0</strong>
+(integer) 1
+</pre>
+
+<p>Přečtení první nepřečtené a neschválené zprávy:</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>xreadgroup group group2 c2 count 1 streams streamQ &gt;</strong>
+1) 1) "streamQ"
+   2) 1) 1) "1611603636610-0"
+         2) 1) "m"
+            2) "2"
+</pre>
+
+
+
+<p><a name="k16"></a></p>
+<h2 id="k16">16. Mazání zpráv z&nbsp;proudu příkazem <strong>XDEL</strong></h2>
+
+<p>Posledním příkazem, o němž se v&nbsp;dnešním článku zmíníme, je příkaz
+<strong>XDEL</strong>, který dokáže z&nbsp;proudu odstranit vybrané zprávy.
+Tomuto příkazu se předává jméno proudu a seznam ID zpráv, které se mají smazat
+(přitom některé z&nbsp;těchto zpráv nemusí existovat, například kvůli
+souběžnému přístupu):</p>
+
+<pre>
+127.0.0.1:6379&gt; <strong>help xdel</strong>
+&nbsp;
+  XDEL key ID [ID ...]
+  summary: Removes the specified entries from the stream. Returns the number of items actually deleted, that may be different from the number of IDs passed in case certain IDs do not exist.
+  since: 5.0.0
+  group: stream
+</pre>
+
+<p><div class="rs-tip-major">Poznámka: tímto příkazem lze alespoň do jisté míry
+implementovat <i>retention policy</i>, která je v&nbsp;případě systému Apache
+Kafka prováděna zcela automaticky na základě zadaných kritérií (počtu zpráv,
+celkové velikosti tématu, platnosti zpráv atd.).</div></p>
+
+
+
+<p><a name="k17"></a></p>
+<h2 id="k17">17. Seznam všech příkazů používaných pro práci s&nbsp;proudy</h2>
+
+<p>V&nbsp;předchozím i dnešním článku byly popsány následující příkazy určené
+pro práci s&nbsp;proudy v&nbsp;systému Redis:</p>
+
+<table>
+<tr><th> #</th><th>Příkaz</th><th>Stručný popis</th></tr>
+<tr><td> 1</td><td>XADD</td><td>připojení zprávy na konec proudu</td></tr>
+<tr><td> 2</td><td>XLEN</td><td>získání počtu zpráv v&nbsp;proudu</td></tr>
+<tr><td> 3</td><td>XREAD</td><td>čtení (blokující i neblokující) zpráv z&nbsp;proudu či proudů</td></tr>
+<tr><td> 4</td><td>XRANGE</td><td>získání zpráv pro daný rozsah jejich ID</td></tr>
+<tr><td> 5</td><td>XREVRANGE</td><td>podobné XRANGE, ovšem zprávy jsou vráceny v&nbsp;opačném pořadí</td></tr>
+<tr><td> 6</td><td>XGROUP</td><td>vytvoření skupiny konzumentů</td></tr>
+<tr><td> 7</td><td>XREADGROUP</td><td>(blokující) čtení zpráv v&nbsp;rámci skupiny konzumentů</td></tr>
+<tr><td> 8</td><td>XACK</td><td>potvrzení přijetí a zpracování zprávy</td></tr>
+<tr><td> 9</td><td>XPENDING</td><td>získání informací o nepotvrzených zprávách</td></tr>
+<tr><td>10</td><td>XDEL</td><td>smazání zprávy či zpráv z&nbsp;proudu</td></tr>
+</table>
+
+
+
+<p><a name="k18"></a></p>
+<h2 id="k18">18. Repositář s&nbsp;demonstračními příklady</h2>
+
+<p>Zdrojové kódy všech dnes popsaných demonstračních příkladů naprogramovaných
+v&nbsp;Pythonu byly uloženy do Git repositáře, který je dostupný na adrese <a
+href="https://github.com/tisnik/py-redis-examples">https://github.com/tisnik/py-redis-examples</a>
+(stále na GitHubu :-). V&nbsp;případě, že nebudete chtít klonovat celý
+repositář (ten je ovšem &ndash; alespoň prozatím &ndash; velmi malý, dnes má
+doslova několik kilobajtů), můžete namísto toho použít odkazy na jednotlivé
+příklady, které naleznete v&nbsp;následující tabulce:</p>
+
+<table>
+<tr><th> #</th><th>Demonstrační příklad</th><th>Popis</th><th>Cesta</th></tr>
+<tr><td> 1</td><td>streams_01_create_stream.py</td><td>připojení k&nbsp;Redisu a konstrukce objektu typu <strong>stream</strong></td><td><a href="https://github.com/tisnik/py-redis-examples/blob/master/streams_01_create_stream.py">https://github.com/tisnik/py-redis-examples/blob/master/streams_01_create_stream.py</a></td></tr>
+<tr><td> 2</td><td>streams_02_add_message.py</td><td>přidání zprávy do proudu metodou <strong>add</strong></td><td><a href="https://github.com/tisnik/py-redis-examples/blob/master/streams_02_add_message.py">https://github.com/tisnik/py-redis-examples/blob/master/streams_02_add_message.py</a></td></tr>
+<tr><td> 3</td><td>streams_03_add_messages.py</td><td>rychlé přidání několika zpráv do proudu metodou <strong>add</strong></td><td><a href="https://github.com/tisnik/py-redis-examples/blob/master/streams_03_add_messages.py">https://github.com/tisnik/py-redis-examples/blob/master/streams_03_add_messages.py</a></td></tr>
+<tr><td> 4</td><td>streams_04_read_messages.py</td><td>neblokující přečtení všech zpráv, které jsou uloženy ve vybraném proudu</td><td><a href="https://github.com/tisnik/py-redis-examples/blob/master/streams_04_read_messages.py">https://github.com/tisnik/py-redis-examples/blob/master/streams_04_read_messages.py</a></td></tr>
+<tr><td> 5</td><td>streams_05_read_new_message.py</td><td>blokující čekání na příchod nové zprávy</td><td><a href="https://github.com/tisnik/py-redis-examples/blob/master/streams_05_read_new_message.py">https://github.com/tisnik/py-redis-examples/blob/master/streams_05_read_new_message.py</a></td></tr>
+<tr><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td><td>&nbsp;</td></tr>
+<tr><td> 6</td><td>streams_06_burst_message_producer.py</td><td>vytvoření 100000 zpráv s&nbsp;měřením času jejich připojení do proudu</td><td><a href="https://github.com/tisnik/py-redis-examples/blob/master/streams_06_burst_message_producer.py">https://github.com/tisnik/py-redis-examples/blob/master/streams_06_burst_message_producer.py</a></td></tr>
+<tr><td> 7</td><td>streams_07_message_consumer.py</td><td>postupná konzumace 100000 zpráv</td><td><a href="https://github.com/tisnik/py-redis-examples/blob/master/streams_07_message_consumer.py">https://github.com/tisnik/py-redis-examples/blob/master/streams_07_message_consumer.py</a></td></tr>
+<tr><td> 8</td><td>streams_08_message_consumer.py</td><td>konzumace 100000 jedinou blokovou operací</td><td><a href="https://github.com/tisnik/py-redis-examples/blob/master/streams_08_message_consumer.py">https://github.com/tisnik/py-redis-examples/blob/master/streams_08_message_consumer.py</a></td></tr>
+<tr><td> 9</td><td>streams_09_read_new_messages_group.py</td><td>základní použití skupin konzumentů</td><td><a href="https://github.com/tisnik/py-redis-examples/blob/master/streams_09_read_new_messages_group.py">https://github.com/tisnik/py-redis-examples/blob/master/streams_09_read_new_messages_group.py</a></td></tr>
+<tr><td>10</td><td>streams_10_read_new_messages_group.py</td><td>blokující čekání na nové zprávy ve skupině konzumentů</td><td><a href="https://github.com/tisnik/py-redis-examples/blob/master/streams_10_read_new_messages_group.py">https://github.com/tisnik/py-redis-examples/blob/master/streams_10_read_new_messages_group.py</a></td></tr>
+</table>
+
+
+
+<p><a name="k19"></a></p>
+<h2 id="k19">19. Předchozí články systému Redis</h2>
+
+<p>Se systémem Redis jsme se již na stránkách Rootu setkali, a to dokonce
+několikrát. Buď jsme si popisovali přímo přístup k&nbsp;Redisu z&nbsp;různých
+programovacích jazyků (což je konkrétně případ všech dále zmíněných článků
+zaměřených na jazyky <a href="https://www.root.cz/n/python/">Python</a> a <a
+href="https://www.root.cz/serialy/programovaci-jazyk-go/">Go</a>) nebo byl
+Redis použit ve funkci databáze resp. perzistentního úložiště různými <a
+href="https://www.root.cz/serialy/message-brokery/">message brokery</a> (<a
+href="https://www.root.cz/clanky/celery-system-implementujici-asynchronni-fronty-uloh-pro-python/">Celery</a>,
+<a
+href="https://www.root.cz/clanky/pouziti-nastroje-rq-redis-queue-pro-spravu-uloh-zpracovavanych-na-pozadi/">RQ</a>,
+apod.). Poslední v&nbsp;seznamu je článek, na který dnes navazujeme:</p>
+
+<ol>
+
+<li>Databáze Redis (nejenom) pro vývojáře používající Python<br />
+<a href="https://www.root.cz/clanky/databaze-redis-nejenom-pro-vyvojare-pouzivajici-python/">https://www.root.cz/clanky/databaze-redis-nejenom-pro-vyvojare-pouzivajici-python/</a>
+</li>
+
+<li>Databáze Redis (nejenom) pro vývojáře používající Python (dokončení)<br />
+<a href="https://www.root.cz/clanky/databaze-redis-nejenom-pro-vyvojare-pouzivajici-python-dokonceni/">https://www.root.cz/clanky/databaze-redis-nejenom-pro-vyvojare-pouzivajici-python-dokonceni/</a>
+</li>
+
+<li>Použití databáze Redis v&nbsp;aplikacích naprogramovaných v Go<br />
+<a href="https://www.root.cz/clanky/pouziti-databaze-redis-v-aplikacich-naprogramovanych-v-go/">https://www.root.cz/clanky/pouziti-databaze-redis-v-aplikacich-naprogramovanych-v-go/</a>
+</li>
+
+<li>Použití databáze Redis v&nbsp;aplikacích naprogramovaných v Go (2)<br />
+<a href="https://www.root.cz/clanky/pouziti-databaze-redis-v-aplikacich-naprogramovanych-v-go-2/">https://www.root.cz/clanky/pouziti-databaze-redis-v-aplikacich-naprogramovanych-v-go-2/</a>
+</li>
+
+<li>Použití nástroje RQ (Redis Queue) pro správu úloh zpracovávaných na pozadí<br />
+<a href="https://www.root.cz/clanky/pouziti-nastroje-rq-redis-queue-pro-spravu-uloh-zpracovavanych-na-pozadi/">https://www.root.cz/clanky/pouziti-nastroje-rq-redis-queue-pro-spravu-uloh-zpracovavanych-na-pozadi/</a>
+</li>
+
+<li>Proudy (streams) podporované systémem Redis<br />
+<a href="https://www.root.cz/clanky/proudy-streams-podporovane-systemem-redis/">https://www.root.cz/clanky/proudy-streams-podporovane-systemem-redis/</a>
+</li>
+
+</ol>
+
+
+
+<p><a name="k20"></a></p>
+<h2 id="k20">20. Odkazy na Internetu</h2>
+
+<ol>
+
+<li>Repositář knihovny walrus na GitHubu<br />
+<a href="https://github.com/coleifer/walrus/">https://github.com/coleifer/walrus/</a>
+</li>
+
+<li>Knihovna walrus na PyPi<br />
+<a href="https://pypi.org/project/walrus/">https://pypi.org/project/walrus/</a>
+</li>
+
+<li>Stránky projektu Redis<br />
+<a href="https://redis.io/">https://redis.io/</a>
+</li>
+
+<li>Introduction to Redis<br />
+<a href="https://redis.io/topics/introduction">https://redis.io/topics/introduction</a>
+</li>
+
+<li>Try Redis<br />
+<a href="http://try.redis.io/">http://try.redis.io/</a>
+</li>
+
+<li>Redis tutorial, April 2010 (starší, ale pěkně udělaný)<br />
+<a href="https://static.simonwillison.net/static/2010/redis-tutorial/">https://static.simonwillison.net/static/2010/redis-tutorial/</a>
+</li>
+
+<li>Python Redis<br />
+<a href="https://redislabs.com/lp/python-redis/">https://redislabs.com/lp/python-redis/</a>
+</li>
+
+<li>Redis: key-value databáze v paměti i na disku<br />
+<a href="https://www.zdrojak.cz/clanky/redis-key-value-databaze-v-pameti-i-na-disku/">https://www.zdrojak.cz/clanky/redis-key-value-databaze-v-pameti-i-na-disku/</a>
+</li>
+
+<li>Scripting Redis with Lua<br />
+<a href="https://redislabs.com/ebook/part-3-next-steps/chapter-11-scripting-redis-with-lua/">https://redislabs.com/ebook/part-3-next-steps/chapter-11-scripting-redis-with-lua/</a>
+</li>
+
+<li>Redis Lua script for atomic operations and cache stampede<br />
+<a href="https://engineering.linecorp.com/en/blog/redis-lua-scripting-atomic-processing-cache/">https://engineering.linecorp.com/en/blog/redis-lua-scripting-atomic-processing-cache/</a>
+</li>
+
+<li>Redis Lua Scripts - Itamar Haber<br />
+<a href="https://www.youtube.com/watch?v=eReTl8NhHCs">https://www.youtube.com/watch?v=eReTl8NhHCs</a>
+</li>
+
+<li>Building Databases with Redis Tutorial: Lua Script | packtpub.com<br />
+<a href="https://www.youtube.com/watch?v=mMfGNsAr7Bg">https://www.youtube.com/watch?v=mMfGNsAr7Bg</a>
+</li>
+
+<li>Příkaz pro spuštění skriptu v&nbsp;jazyce Lua: EVAL script numkeys key [key ...] arg [arg ...]<br />
+<a href="https://redis.io/commands/eval">https://redis.io/commands/eval</a>
+</li>
+
+<li>Redis Lua scripts debugger<br />
+<a href="https://redis.io/topics/ldb">https://redis.io/topics/ldb</a>
+</li>
+
+<li>Repositář projektu s&nbsp;Redis klientem pro jazyk Go<br />
+<a href="https://github.com/go-redis/redis">https://github.com/go-redis/redis</a>
+</li>
+
+<li>Stránky programovacího jazyka Lua<br />
+<a href="https://www.lua.org/">https://www.lua.org/</a>
+</li>
+
+<li>Programovací jazyk Lua<br />
+<a href="https://www.palmknihy.cz/ucebnice-odborna-literatura/programovaci-jazyk-lua-12651">https://www.palmknihy.cz/ucebnice-odborna-literatura/programovaci-jazyk-lua-12651</a>
+</li>
+
+<li>Programming in Lua<br />
+<a href="https://www.lua.org/pil/">https://www.lua.org/pil/</a>
+</li>
+
+<li>Praktický úvod do Redis (1): vaše distribuovaná NoSQL cache<br />
+<a href="http://www.cloudsvet.cz/?p=253">http://www.cloudsvet.cz/?p=253</a>
+</li>
+
+<li>Praktický úvod do Redis (2): transakce<br />
+<a href="http://www.cloudsvet.cz/?p=256">http://www.cloudsvet.cz/?p=256</a>
+</li>
+
+<li>Praktický úvod do Redis (3): cluster<br />
+<a href="http://www.cloudsvet.cz/?p=258">http://www.cloudsvet.cz/?p=258</a>
+</li>
+
+<li>Connection pool<br />
+<a href="https://en.wikipedia.org/wiki/Connection_pool">https://en.wikipedia.org/wiki/Connection_pool</a>
+</li>
+
+<li>Instant Redis Sentinel Setup<br />
+<a href="https://github.com/ServiceStack/redis-config">https://github.com/ServiceStack/redis-config</a>
+</li>
+
+<li>How to install REDIS in LInux<br />
+<a href="https://linuxtechlab.com/how-install-redis-server-linux/">https://linuxtechlab.com/how-install-redis-server-linux/</a>
+</li>
+
+<li>Redis RDB Dump File Format<br />
+<a href="https://github.com/sripathikrishnan/redis-rdb-tools/wiki/Redis-RDB-Dump-File-Format">https://github.com/sripathikrishnan/redis-rdb-tools/wiki/Redis-RDB-Dump-File-Format</a>
+</li>
+
+<li>Lempel–Ziv–Welch<br />
+<a href="https://en.wikipedia.org/wiki/Lempel%E2%80%93Ziv%E2%80%93Welch">https://en.wikipedia.org/wiki/Lempel%E2%80%93Ziv%E2%80%93Welch</a>
+</li>
+
+<li>Redis Persistence<br />
+<a href="https://redis.io/topics/persistence">https://redis.io/topics/persistence</a>
+</li>
+
+<li>Redis persistence demystified<br />
+<a href="http://oldblog.antirez.com/post/redis-persistence-demystified.html">http://oldblog.antirez.com/post/redis-persistence-demystified.html</a>
+</li>
+
+<li>Redis reliable queues with Lua scripting<br />
+<a href="http://oldblog.antirez.com/post/250">http://oldblog.antirez.com/post/250</a>
+</li>
+
+<li>Ost (knihovna)<br />
+<a href="https://github.com/soveran/ost">https://github.com/soveran/ost</a>
+</li>
+
+<li>NoSQL<br />
+<a href="https://en.wikipedia.org/wiki/NoSQL">https://en.wikipedia.org/wiki/NoSQL</a>
+</li>
+
+<li>Shard (database architecture)<br />
+<a href="https://en.wikipedia.org/wiki/Shard_%28database_architecture%29">https://en.wikipedia.org/wiki/Shard_%28database_architecture%29</a>
+</li>
+
+<li>What is sharding and why is it important?<br />
+<a href="https://stackoverflow.com/questions/992988/what-is-sharding-and-why-is-it-important">https://stackoverflow.com/questions/992988/what-is-sharding-and-why-is-it-important</a>
+</li>
+
+<li>What Is Sharding?<br />
+<a href="https://btcmanager.com/what-sharding/">https://btcmanager.com/what-sharding/</a>
+</li>
+
+<li>Redis clients<br />
+<a href="https://redis.io/clients">https://redis.io/clients</a>
+</li>
+
+<li>Category:Lua-scriptable software<br />
+<a href="https://en.wikipedia.org/wiki/Category:Lua-scriptable_software">https://en.wikipedia.org/wiki/Category:Lua-scriptable_software</a>
+</li>
+
+<li>Seriál Programovací jazyk Lua<br />
+<a href="https://www.root.cz/serialy/programovaci-jazyk-lua/">https://www.root.cz/serialy/programovaci-jazyk-lua/</a>
+</li>
+
+<li>Redis memory usage<br />
+<a href="http://nosql.mypopescu.com/post/1010844204/redis-memory-usage">http://nosql.mypopescu.com/post/1010844204/redis-memory-usage</a>
+</li>
+
+<li>Ukázka konfigurace Redisu pro lokální testování<br />
+<a href="https://github.com/tisnik/presentations/blob/master/redis/redis.conf">https://github.com/tisnik/presentations/blob/master/redis/redis.conf</a>
+</li>
+
+<li>Resque<br />
+<a href="https://github.com/resque/resque">https://github.com/resque/resque</a>
+</li>
+
+<li>Nested transaction<br />
+<a href="https://en.wikipedia.org/wiki/Nested_transaction">https://en.wikipedia.org/wiki/Nested_transaction</a>
+</li>
+
+<li>Publish–subscribe pattern<br />
+<a href="https://en.wikipedia.org/wiki/Publish%E2%80%93subscribe_pattern">https://en.wikipedia.org/wiki/Publish%E2%80%93subscribe_pattern</a>
+</li>
+
+<li>Messaging pattern<br />
+<a href="https://en.wikipedia.org/wiki/Messaging_pattern">https://en.wikipedia.org/wiki/Messaging_pattern</a>
+</li>
+
+<li>Using pipelining to speedup Redis queries<br />
+<a href="https://redis.io/topics/pipelining">https://redis.io/topics/pipelining</a>
+</li>
+
+<li>Pub/Sub<br />
+<a href="https://redis.io/topics/pubsub">https://redis.io/topics/pubsub</a>
+</li>
+
+<li>ZeroMQ distributed messaging<br />
+<a href="http://zeromq.org/">http://zeromq.org/</a>
+</li>
+
+<li>Publish/Subscribe paradigm: Why must message classes not know about their subscribers?<br />
+<a href="https://stackoverflow.com/questions/2908872/publish-subscribe-paradigm-why-must-message-classes-not-know-about-their-subscr">https://stackoverflow.com/questions/2908872/publish-subscribe-paradigm-why-must-message-classes-not-know-about-their-subscr</a>
+</li>
+
+<li>Python &amp; Redis PUB/SUB<br />
+<a href="https://medium.com/@johngrant/python-redis-pub-sub-6e26b483b3f7">https://medium.com/@johngrant/python-redis-pub-sub-6e26b483b3f7</a>
+</li>
+
+<li>Message broker<br />
+<a href="https://en.wikipedia.org/wiki/Message_broker">https://en.wikipedia.org/wiki/Message_broker</a>
+</li>
+
+<li>RESP Arrays<br />
+<a href="https://redis.io/topics/protocol#array-reply">https://redis.io/topics/protocol#array-reply</a>
+</li>
+
+<li>Redis Protocol specification<br />
+<a href="https://redis.io/topics/protocol">https://redis.io/topics/protocol</a>
+</li>
+
+<li>Redis Pub/Sub: Intro Guide<br />
+<a href="https://www.redisgreen.net/blog/pubsub-intro/">https://www.redisgreen.net/blog/pubsub-intro/</a>
+</li>
+
+<li>Redis Pub/Sub: Howto Guide<br />
+<a href="https://www.redisgreen.net/blog/pubsub-howto/">https://www.redisgreen.net/blog/pubsub-howto/</a>
+</li>
+
+<li>Comparing Publish-Subscribe Messaging and Message Queuing<br />
+<a href="https://dzone.com/articles/comparing-publish-subscribe-messaging-and-message">https://dzone.com/articles/comparing-publish-subscribe-messaging-and-message</a>
+</li>
+
+<li>ActiveMQ<br />
+<a href="http://activemq.apache.org/activemq-website/index.html">http://activemq.apache.org/activemq-website/index.html</a>
+</li>
+
+<li>Amazon Simple Queue Service<br />
+<a href="https://aws.amazon.com/sqs/">https://aws.amazon.com/sqs/</a>
+</li>
+
+<li>Apache Kafka<br />
+<a href="https://kafka.apache.org/">https://kafka.apache.org/</a>
+</li>
+
+<li>Cloud Pub/Sub<br />
+<a href="https://cloud.google.com/pubsub/">https://cloud.google.com/pubsub/</a>
+</li>
+
+<li>Introduction to Redis Streams<br />
+<a href="https://redis.io/topics/streams-intro">https://redis.io/topics/streams-intro</a>
+</li>
+
+<li>Introduction to Redis streams with Python<br />
+<a href="http://charlesleifer.com/blog/redis-streams-with-python/">http://charlesleifer.com/blog/redis-streams-with-python/</a>
+</li>
+
+<li>glob (programming)<br />
+<a href="https://en.wikipedia.org/wiki/Glob_(programming)">https://en.wikipedia.org/wiki/Glob_(programming)</a>
+</li>
+
+<li>Microservices: The Rise Of Kafka<br />
+<a href="https://movio.co/blog/microservices-rise-kafka/">https://movio.co/blog/microservices-rise-kafka/</a>
+</li>
+
+<li>Building a Microservices Ecosystem with Kafka Streams and KSQL<br />
+<a href="https://www.confluent.io/blog/building-a-microservices-ecosystem-with-kafka-streams-and-ksql/">https://www.confluent.io/blog/building-a-microservices-ecosystem-with-kafka-streams-and-ksql/</a>
+</li>
+
+<li>An introduction to Apache Kafka and microservices communication<br />
+<a href="https://medium.com/@ulymarins/an-introduction-to-apache-kafka-and-microservices-communication-bf0a0966d63">https://medium.com/@ulymarins/an-introduction-to-apache-kafka-and-microservices-communication-bf0a0966d63</a>
+</li>
+
+<li>kappa-architecture.com<br />
+<a href="http://milinda.pathirage.org/kappa-architecture.com/">http://milinda.pathirage.org/kappa-architecture.com/</a>
+</li>
+
+<li>Questioning the Lambda Architecture<br />
+<a href="https://www.oreilly.com/ideas/questioning-the-lambda-architecture">https://www.oreilly.com/ideas/questioning-the-lambda-architecture</a>
+</li>
+
+<li>Lambda architecture<br />
+<a href="https://en.wikipedia.org/wiki/Lambda_architecture">https://en.wikipedia.org/wiki/Lambda_architecture</a>
+</li>
+
+<li>Kafka &ndash; ecosystem (Wiki)<br />
+<a href="https://cwiki.apache.org/confluence/display/KAFKA/Ecosystem">https://cwiki.apache.org/confluence/display/KAFKA/Ecosystem</a>
+</li>
+
+<li>The Kafka Ecosystem - Kafka Core, Kafka Streams, Kafka Connect, Kafka REST Proxy, and the Schema Registry<br />
+<a href="http://cloudurable.com/blog/kafka-ecosystem/index.html">http://cloudurable.com/blog/kafka-ecosystem/index.html</a>
+</li>
+
+<li>A Kafka Operator for Kubernetes<br />
+<a href="https://github.com/krallistic/kafka-operator">https://github.com/krallistic/kafka-operator</a>
+</li>
+
+<li>Kafka Streams<br />
+<a href="https://cwiki.apache.org/confluence/display/KAFKA/Kafka+Streams">https://cwiki.apache.org/confluence/display/KAFKA/Kafka+Streams</a>
+</li>
+
+<li>Kafka Streams<br />
+<a href="http://kafka.apache.org/documentation/streams/">http://kafka.apache.org/documentation/streams/</a>
+</li>
+
+<li>Kafka Streams (FAQ)<br />
+<a href="https://cwiki.apache.org/confluence/display/KAFKA/FAQ#FAQ-Streams">https://cwiki.apache.org/confluence/display/KAFKA/FAQ#FAQ-Streams</a>
+</li>
+
+<li>What are some alternatives to Apache Kafka?<br />
+<a href="https://www.quora.com/What-are-some-alternatives-to-Apache-Kafka">https://www.quora.com/What-are-some-alternatives-to-Apache-Kafka</a>
+</li>
+
+<li>What is the best alternative to Kafka?<br />
+<a href="https://www.slant.co/options/961/alternatives/~kafka-alternatives">https://www.slant.co/options/961/alternatives/~kafka-alternatives</a>
+</li>
+
+<li>A super quick comparison between Kafka and Message Queues<br />
+<a href="https://hackernoon.com/a-super-quick-comparison-between-kafka-and-message-queues-e69742d855a8?gi=e965191e72d0">https://hackernoon.com/a-super-quick-comparison-between-kafka-and-message-queues-e69742d855a8?gi=e965191e72d0</a>
+</li>
+
+<li>Kafka Queuing: Kafka as a Messaging System<br />
+<a href="https://dzone.com/articles/kafka-queuing-kafka-as-a-messaging-system">https://dzone.com/articles/kafka-queuing-kafka-as-a-messaging-system</a>
+</li>
+
+</ol>
+
+
+
+<p></p><p></p>
+<p><small>Autor: <a href="http://www.fit.vutbr.cz/~tisnovpa">Pavel Tišnovský</a> &nbsp; 2021</small></p>
+</body>
+</html>
+
