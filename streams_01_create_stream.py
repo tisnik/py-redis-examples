@@ -13,6 +13,8 @@
 #      Pavel Tisnovsky
 #
 
+"""Basic walrus library usage - a Stream constructor."""
+
 from walrus import Database
 
 db = Database()
