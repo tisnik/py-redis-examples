@@ -13,6 +13,8 @@
 #      Pavel Tisnovsky
 #
 
+"""Walrus library usage - adding (appending) a message to stream."""
+
 from walrus import Database
 
 db = Database()
