@@ -13,6 +13,8 @@
 #      Pavel Tisnovsky
 #
 
+"""Simple microbenchmark - burst message consumer."""
+
 import time
 
 from walrus import Database
