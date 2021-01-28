@@ -13,7 +13,7 @@
 #      Pavel Tisnovsky
 #
 
-"""Walrus library usage - adding (appending) a message to stream."""
+"""Walrus library usage - adding (appending) more messages to stream."""
 
 from walrus import Database
 
