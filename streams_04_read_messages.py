@@ -13,6 +13,8 @@
 #      Pavel Tisnovsky
 #
 
+"""Walrus library usage - reading all messages from selected stream."""
+
 from walrus import Database
 
 db = Database()
