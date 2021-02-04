@@ -13,7 +13,7 @@
 #      Pavel Tisnovsky
 #
 
-"""Reading message by a consumer that is part of message consumer group."""
+"""Reading messages by a consumer that is part of message consumer group."""
 
 from walrus import Database
 
