@@ -31,6 +31,7 @@ def connect(host, port):
 
 
 def handler(message):
+    """Handler zavolaný při přijetí zprávy."""
     print("type {type}  message '{message}'".format(type=message["type"],
                                                     message=message["data"]))
 
