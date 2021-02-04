@@ -16,6 +16,8 @@
 #
 
 
+"""Operace typu SUB - čtení zpráv z Redisu."""
+
 import redis
 import time
 
