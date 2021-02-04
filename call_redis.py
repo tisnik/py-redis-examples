@@ -13,6 +13,8 @@
 #      Pavel Tisnovsky
 #
 
+"""Zavolání operace (příkazu) v Redisu."""
+
 from sys import argv, exit
 import time
 import socket
