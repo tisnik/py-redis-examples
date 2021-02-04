@@ -21,6 +21,7 @@ BLOCK_LENGTH = 512
 
 
 def connect(host, port):
+    """Připojení k Redisu na specifikované adrese a portu."""
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     s.connect((host, int(port)))
     return s
