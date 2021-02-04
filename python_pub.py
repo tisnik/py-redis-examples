@@ -16,7 +16,7 @@
 #
 
 
-"""Operace typu PUP - publikace zpráv do Redisu."""
+"""Operace typu PUB - publikace zpráv do Redisu."""
 
 import redis
 import time
