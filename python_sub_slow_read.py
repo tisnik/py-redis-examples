@@ -24,6 +24,7 @@ CHANNEL_NAME = "kanal1"
 
 
 def connect(host, port):
+    """Připojení k Redisu na specifikované adrese a portu."""
     return redis.Redis(host=host, port=port)
 
 
