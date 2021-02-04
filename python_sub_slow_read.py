@@ -29,6 +29,7 @@ def connect(host, port):
 
 
 def sub(host, port, channel):
+    """Operace typu SUB - příjem zpráv z Redisu."""
     r = connect(host, port)
     pubsub = r.pubsub(ignore_subscribe_messages=True)
     pubsub.subscribe(channel)
