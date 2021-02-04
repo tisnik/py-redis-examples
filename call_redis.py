@@ -28,6 +28,7 @@ def connect(host, port):
 
 
 def call_redis(host, port, command):
+    """Zavolání operace (příkazu) v Redisu."""
     s = connect(host, port)
     s.sendall(command.encode())
     data = s.recv(BLOCK_LENGTH)
