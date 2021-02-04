@@ -13,6 +13,8 @@
 #      Pavel Tisnovsky
 #
 
+"""Reading message by a consumer that is part of message consumer group."""
+
 from walrus import Database
 
 db = Database()
