@@ -37,6 +37,7 @@ def handler(message):
 
 
 def sub(host, port, channel):
+    """Operace typu SUB - čtení zpráv z Redisu."""
     r = connect(host, port)
     pubsub = r.pubsub()
     pubsub.subscribe(**{channel: handler})
