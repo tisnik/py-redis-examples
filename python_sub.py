@@ -15,6 +15,7 @@
 #      Pavel Tisnovsky
 #
 
+"""Operace typu SUB - příjem zpráv z Redisu."""
 
 import redis
 import time
